@@ -1,0 +1,29 @@
+{
+  "name": "el-pueblo-oculto",
+  "version": "0.9.0-beta.1",
+  "private": true,
+  "description": "Juego social multijugador de misterio ambientado en un pueblo andino.",
+  "type": "module",
+  "main": "server/server.js",
+  "scripts": {
+    "dev": "nodemon server/server.js",
+    "start": "node server/server.js",
+    "test": "node --test --test-concurrency=1",
+    "test:rc": "node --test test/releaseCandidate.test.js --test-concurrency=1",
+    "test:production": "node --test test/production.test.js --test-concurrency=1",
+    "audit:browser": "node scripts/visual-browser-audit.mjs",
+    "check": "node --check server/server.js && node --check server/config/environment.js && node --check server/config/version.js && node --check server/services/roomService.js && node --check server/socket/roomHandlers.js && node --check server/utils/errors.js && node --check server/utils/logger.js && node --check server/utils/validators.js && node --check server/utils/rateLimiter.js && node --check server/chat/messageValidator.js && node --check server/game/assignRoles.js && node --check server/game/clueDefinitions.js && node --check server/game/distributeClues.js && node --check server/game/explorationDefinitions.js && node --check server/game/countVotes.js && node --check js/audioManager.js && node --check js/app.js && node --check js/multiplayer.js && node --check scripts/visual-browser-audit.mjs"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "socket.io-client": "^4.8.3"
+  }
+}

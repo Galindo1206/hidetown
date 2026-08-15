@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b1520">
+  <meta name="description" content="Prototipo visual de El Pueblo Oculto, un juego social de misterio ambientado en los Andes.">
+  <meta name="application-version" content="0.9.0-beta.1">
+  <title>El Pueblo Oculto — Beta pública 0.9</title>
+  <link rel="icon" href="assets/icons/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/responsive.css">
+  <script src="/socket.io/socket.io.js" defer></script>
+  <script src="js/navigation.js" defer></script>
+  <script src="js/multiplayer.js" defer></script>
+  <script src="js/audioManager.js" defer></script>
+  <script src="js/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Saltar al contenido</a>
+
+  <div class="world" aria-hidden="true">
+    <div class="world__stars"></div>
+    <div class="world__moon"></div>
+    <div class="mountain mountain--far"></div>
+    <div class="mountain mountain--near"></div>
+    <div class="village">
+      <span class="house house--one"></span>
+      <span class="house house--two"></span>
+      <span class="house house--three"></span>
+      <span class="church"></span>
+    </div>
+    <div class="mist mist--one"></div>
+    <div class="mist mist--two"></div>
+    <div class="world__road"></div>
+    <div class="world__foreground"></div>
+    <div class="world__vignette"></div>
+  </div>
+
+  <button class="sound-toggle" id="sound-toggle" type="button" aria-pressed="false" aria-label="Silenciar sonido">
+    <svg class="sound-toggle__icon sound-toggle__icon--on" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9v6h4l5 4V5L8 9H4Zm12.5-.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>
+    </svg>
+    <svg class="sound-toggle__icon sound-toggle__icon--off" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 9v6h4l5 4V5L8 9H4Zm12 1 5 5m0-5-5 5"/>
+    </svg>
+    <span class="sound-toggle__text">Sonido</span>
+  </button>
+
+  <aside class="connection-alert" id="connection-alert" role="status" aria-live="polite" aria-atomic="true" hidden>
+    <span class="connection-alert__icon" aria-hidden="true">●</span>
+    <p id="connection-alert-message"></p>
+    <button class="button button--ghost" id="connection-alert-close" type="button" aria-label="Cerrar aviso">Cerrar</button>
+    <button class="button button--secondary" id="connection-alert-retry" type="button" hidden>Reintentar</button>
+    <button class="button button--secondary" id="connection-alert-home" type="button" hidden>Volver al inicio</button>
+  </aside>
+
+  <main id="main-content" class="app-shell">
+    <section class="screen screen--loading is-active" id="loading" data-screen aria-labelledby="loading-title">
+      <div class="loading-mark" aria-hidden="true">
+        <span class="loading-mark__mountain"></span>
+        <span class="loading-mark__moon"></span>
+      </div>
+      <p class="eyebrow">Una noche en los Andes</p>
+      <h1 id="loading-title" class="game-title">El Pueblo <span>Oculto</span></h1>
+      <p class="loading-prologue">En este pueblo, no todos son quienes dicen ser.</p>
+      <div class="loader" role="status">
+        <span class="loader__track"><span class="loader__fill"></span></span>
+        <span class="loader__label">La neblina está descendiendo…</span>
+      </div>
+    </section>
+
+    <section class="screen screen--menu" id="menu" data-screen hidden aria-labelledby="menu-title">
+      <div class="menu-emblem" aria-hidden="true"><span></span></div>
+      <p class="eyebrow">Un misterio despierta en las montañas</p>
+      <h1 id="menu-title" class="game-title">El Pueblo <span>Oculto</span></h1>
+      <p class="tagline">Cuando cae la noche, no todos conservan su verdadero rostro.</p>
+      <nav class="menu-actions" aria-label="Menú principal">
+        <button class="button button--primary" type="button" data-go-to="create-room">
+          <span aria-hidden="true">✦</span> Crear sala
+        </button>
+        <button class="button button--secondary" type="button" data-go-to="join-room">
+          <span aria-hidden="true">⌁</span> Unirse a una sala
+        </button>
+        <button class="button button--ghost" type="button" data-go-to="how-to-play">Cómo jugar</button>
+        <button class="button button--ghost" type="button" data-go-to="about-prototype">Acerca del prototipo</button>
+      </nav>
+      <p class="version">0.9.0-beta.1 · Beta pública experimental</p>
+    </section>
+
+    <section class="screen" id="create-room" data-screen hidden aria-labelledby="create-title">
+      <div class="panel">
+        <button class="back-button" type="button" data-go-to="menu" aria-label="Volver al menú principal">
+          <span aria-hidden="true">←</span> Volver
+        </button>
+        <p class="eyebrow">Reúne al pueblo</p>
+        <h2 id="create-title">Crear una sala</h2>
+        <p class="panel__intro">Elige el nombre con el que los demás te reconocerán.</p>
+        <form id="create-form" novalidate>
+          <div class="field">
+            <label for="create-name">Nombre del jugador</label>
+            <input id="create-name" name="playerName" type="text" autocomplete="nickname" minlength="2" maxlength="20" placeholder="Ej. Inti" aria-describedby="create-name-error">
+            <p class="field__error" id="create-name-error"></p>
+          </div>
+          <button class="button button--primary button--full" type="submit">Crear sala</button>
+          <div class="notice" id="create-notice" role="status" aria-live="polite" hidden></div>
+        </form>
+      </div>
+    </section>
+
+    <section class="screen" id="join-room" data-screen hidden aria-labelledby="join-title">
+      <div class="panel">
+        <button class="back-button" type="button" data-go-to="menu" aria-label="Volver al menú principal">
+          <span aria-hidden="true">←</span> Volver
+        </button>
+        <p class="eyebrow">Sigue la señal</p>
+        <h2 id="join-title">Unirse a una sala</h2>
+        <p class="panel__intro">Ingresa tus datos y el código compartido por tu grupo.</p>
+        <form id="join-form" novalidate>
+          <div class="field">
+            <label for="join-name">Nombre del jugador</label>
+            <input id="join-name" name="playerName" type="text" autocomplete="nickname" minlength="2" maxlength="20" placeholder="Ej. Killa" aria-describedby="join-name-error">
+            <p class="field__error" id="join-name-error"></p>
+          </div>
+          <div class="field">
+            <label for="room-code">Código de sala</label>
+            <input class="room-code" id="room-code" name="roomCode" type="text" inputmode="text" autocapitalize="characters" autocomplete="off" minlength="5" maxlength="6" placeholder="ABCD12" aria-describedby="room-code-hint room-code-error">
+            <p class="field__hint" id="room-code-hint">Usa el código que recibiste del anfitrión.</p>
+            <p class="field__error" id="room-code-error"></p>
+          </div>
+          <button class="button button--primary button--full" type="submit">Unirse</button>
+          <div class="notice" id="join-notice" role="status" aria-live="polite" hidden></div>
+        </form>
+      </div>
+    </section>
+
+    <section class="screen screen--room" id="waiting-room" data-screen hidden aria-labelledby="waiting-title">
+      <div class="panel panel--wide room-panel">
+        <div class="room-heading">
+          <div>
+            <p class="eyebrow">La reunión ha comenzado</p>
+            <h2 id="waiting-title">Sala de espera</h2>
+          </div>
+          <div class="connection-pill" data-connection-state="connecting" aria-live="polite">
+            <span class="connection-pill__dot" aria-hidden="true"></span>
+            <span class="connection-pill__text">Conectando</span>
+          </div>
+        </div>
+
+        <div class="room-code-card">
+          <div>
+            <span class="room-code-card__label">Código de la sala</span>
+            <strong class="room-code-card__value" id="waiting-room-code">------</strong>
+          </div>
+          <button class="copy-button" id="copy-room-code" type="button" aria-describedby="copy-feedback">
+            <span aria-hidden="true">⧉</span> Copiar
+          </button>
+        </div>
+        <p class="copy-feedback" id="copy-feedback" role="status" aria-live="polite"></p>
+
+        <div class="players-heading">
+          <div>
+            <h3>Esperando jugadores</h3>
+            <p>Comparte el código con tu grupo.</p>
+          </div>
+          <strong class="player-count" id="player-count">1/6</strong>
+        </div>
+        <ul class="player-list" id="player-list" aria-label="Jugadores de la sala"></ul>
+
+        <div class="notice room-notice" id="room-notice" role="status" aria-live="polite"></div>
+        <p class="start-requirement" id="start-requirement">Se necesitan al menos 3 jugadores para iniciar.</p>
+        <div class="room-actions">
+          <button class="button button--primary button--full" id="start-room" type="button" hidden>Iniciar partida</button>
+          <button class="button button--danger button--full" id="leave-room" type="button">Salir de la sala</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen screen--story" id="story-screen" data-screen hidden aria-labelledby="story-title">
+      <article class="panel panel--wide story-panel">
+        <div class="game-stage-heading">
+          <div>
+            <p class="eyebrow">Primera historia</p>
+            <p class="story-location" id="story-location">Sierra del Perú</p>
+          </div>
+          <div class="connection-pill" data-connection-state="connecting" aria-live="polite">
+            <span class="connection-pill__dot" aria-hidden="true"></span>
+            <span class="connection-pill__text">Conectando</span>
+          </div>
+        </div>
+        <div class="church-mark" aria-hidden="true"><span></span></div>
+        <h2 id="story-title">Las campanas de San Jerónimo</h2>
+        <p class="story-atmosphere" id="story-atmosphere"></p>
+        <div class="story-copy" id="story-introduction"></div>
+        <div class="secret-warning">
+          <span aria-hidden="true">◈</span>
+          <p id="story-transition">Cada participante recibirá información secreta.</p>
+        </div>
+        <p class="stage-meta"><span id="story-player-count">3 jugadores</span> · <strong id="story-progress" aria-live="polite">0 de 3 preparados</strong></p>
+        <button class="button button--primary button--full" id="confirm-story" type="button">Continuar</button>
+        <p class="stage-waiting" id="story-waiting" role="status" aria-live="polite" hidden>Has terminado de leer. Esperando a los demás…</p>
+        <button class="button button--ghost button--full leave-room-trigger" type="button">Salir de la sala</button>
+        <div class="notice" id="story-notice" role="status" aria-live="polite" hidden></div>
+      </article>
+    </section>
+
+    <section class="screen screen--role" id="role-screen" data-screen hidden aria-labelledby="role-screen-title">
+      <div class="panel panel--wide role-panel">
+        <div class="game-stage-heading">
+          <div>
+            <p class="eyebrow">Información privada</p>
+            <h2 id="role-screen-title">Tu rol es…</h2>
+          </div>
+          <div class="connection-pill" data-connection-state="connecting" aria-live="polite">
+            <span class="connection-pill__dot" aria-hidden="true"></span>
+            <span class="connection-pill__text">Conectando</span>
+          </div>
+        </div>
+        <p class="privacy-warning"><span aria-hidden="true">◉</span> No permitas que los demás vean tu pantalla.</p>
+        <p class="stage-meta"><strong id="role-progress" aria-live="polite">0 de 3 jugadores preparados</strong></p>
+
+        <div class="role-card is-concealed" id="role-card">
+          <div class="role-card__back" id="role-card-back">
+            <span class="role-seal" aria-hidden="true">?</span>
+            <strong>Carta sellada</strong>
+            <p>Revela tu rol cuando nadie más pueda ver la pantalla.</p>
+          </div>
+          <div class="role-card__face" id="role-card-face" hidden>
+            <span class="role-icon" id="role-icon" aria-hidden="true"></span>
+            <p class="role-card__label">Tu rol es</p>
+            <h3 id="private-role-name"></h3>
+            <p id="private-role-description"></p>
+            <div class="role-objective">
+              <span>Tu objetivo</span>
+              <p id="private-role-objective"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="role-controls" id="role-controls">
+          <button class="button button--primary button--full" id="reveal-role" type="button">Revelar rol</button>
+          <button class="button button--secondary button--full" id="hide-role" type="button" hidden>Volver a ocultar</button>
+          <button class="button button--primary button--full" id="confirm-role" type="button" disabled>Entendido, estoy listo</button>
+        </div>
+        <div class="role-confirmed" id="role-confirmed" hidden>
+          <span aria-hidden="true">✓</span>
+          <h3>Tu preparación está confirmada</h3>
+          <p>La carta permanece oculta mientras esperas a los demás jugadores.</p>
+        </div>
+        <button class="button button--ghost button--full leave-room-trigger" type="button">Salir de la sala</button>
+        <div class="notice" id="role-notice" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+
+    <section class="screen" id="exploration-ready" data-screen hidden aria-labelledby="exploration-ready-title">
+      <article class="panel panel--wide ready-panel exploration-ready-panel">
+        <div class="ready-symbol" aria-hidden="true">⌖</div>
+        <p class="eyebrow">Nueva fase de investigación</p>
+        <h2 id="exploration-ready-title">Exploren el pueblo</h2>
+        <p class="ready-message">Tienen un minuto para investigar San Jerónimo. Cada jugador podrá conservar como máximo dos pistas. Recuerden bien dónde las encontraron: alguien intentará cambiar la verdad.</p>
+        <div class="exploration-facts"><p><strong id="exploration-duration">60 segundos</strong><span>Tiempo controlado por el servidor</span></p><p><strong>Máximo 2 pistas</strong><span>Los hallazgos son privados</span></p></div>
+        <ul class="exploration-zone-summary" id="exploration-zone-summary" aria-label="Zonas disponibles"></ul>
+        <p class="stage-meta"><strong id="exploration-ready-progress" aria-live="polite">0 de 3 jugadores preparados</strong></p>
+        <button class="button button--primary button--full" id="confirm-exploration-ready" type="button">Estoy preparado</button>
+        <p class="stage-waiting" id="exploration-ready-waiting" role="status" aria-live="polite" hidden>Tu preparación está confirmada. La exploración comenzará cuando todos estén listos o termine la espera.</p>
+        <div class="connection-pill" data-connection-state="connecting" aria-live="polite"><span class="connection-pill__dot" aria-hidden="true"></span><span class="connection-pill__text">Conectando</span></div>
+        <button class="button button--ghost button--full leave-room-trigger" type="button">Salir de la sala</button>
+        <div class="notice" id="exploration-ready-notice" role="status" aria-live="polite" hidden></div>
+      </article>
+    </section>
+
+    <section class="screen screen--exploration" id="exploration-screen" data-screen hidden aria-labelledby="exploration-title">
+      <div class="exploration-layout">
+        <header class="exploration-header">
+          <div><p class="eyebrow">San Jerónimo</p><h2 id="exploration-title">Mapa del pueblo</h2></div>
+          <div class="discussion-timer exploration-timer" id="exploration-timer" role="timer" aria-live="off"><strong id="exploration-timer-value">01:00</strong><span id="exploration-timer-status">Tiempo restante</span></div>
+        </header>
+        <div class="exploration-toolbar">
+          <div class="connection-pill" data-connection-state="connecting" aria-live="polite"><span class="connection-pill__dot" aria-hidden="true"></span><span class="connection-pill__text">Conectando</span></div>
+          <strong id="exploration-clue-count" aria-live="polite">0/2 pistas</strong>
+          <button class="button button--secondary" id="open-exploration-notebook" type="button">Abrir cuaderno</button>
+        </div>
+        <div class="village-map" id="village-map" aria-label="Selecciona una zona"></div>
+        <section class="zone-scene" id="zone-scene" hidden aria-labelledby="zone-scene-title">
+          <button class="back-button" id="back-to-map" type="button"><span aria-hidden="true">←</span> Regresar al mapa</button>
+          <div class="zone-scene__heading"><span id="zone-scene-symbol" aria-hidden="true"></span><div><p class="eyebrow">Investigando</p><h3 id="zone-scene-title"></h3></div></div>
+          <p id="zone-presence" class="zone-presence"></p>
+          <div class="investigation-object-grid" id="investigation-object-grid"></div>
+        </section>
+        <div class="notice" id="exploration-notice" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+
+    <section class="screen" id="exploration-finished" data-screen hidden aria-labelledby="exploration-finished-title">
+      <div class="panel panel--wide ready-panel">
+        <div class="ready-symbol" aria-hidden="true">☾</div>
+        <p class="eyebrow">El pueblo vuelve a reunirse</p>
+        <h2 id="exploration-finished-title">La investigación ha terminado</h2>
+        <p class="ready-message">Recuerden lo que encontraron: desde este momento, las palabras serán tan importantes como las pruebas.</p>
+        <button class="button button--secondary" id="open-finished-notebook" type="button">Revisar mi cuaderno</button>
+        <p class="stage-waiting" role="status" aria-live="polite">Preparando la conversación…</p>
+        <div class="connection-pill" data-connection-state="connecting" aria-live="polite"><span class="connection-pill__dot" aria-hidden="true"></span><span class="connection-pill__text">Conectando</span></div>
+      </div>
+    </section>
+
+    <section class="screen" id="discussion-ready" data-screen hidden aria-labelledby="discussion-title">
+      <div class="panel panel--wide ready-panel">
+        <div class="ready-symbol" aria-hidden="true">✦</div>
+        <p class="eyebrow">Todos conocen sus pistas</p>
+        <h2 id="discussion-title">La conversación está por comenzar</h2>
+        <p class="ready-message">Compartan lo que descubrieron, escuchen las versiones de los demás y busquen contradicciones. Uno de ustedes tendrá que inventar su historia.</p>
+        <ul class="ready-player-list" id="discussion-player-list" aria-label="Jugadores preparados"></ul>
+        <div class="discussion-facts">
+          <p><strong id="discussion-duration">4 minutos</strong><span>Duración controlada por el servidor</span></p>
+          <p><strong>Chat público</strong><span>Todo el pueblo podrá leer los mensajes</span></p>
+          <p><strong>Pistas disponibles</strong><span>Podrás consultar solo las tuyas</span></p>
+        </div>
+        <button class="button button--primary button--full" id="start-discussion" type="button" hidden>Iniciar conversación</button>
+        <p class="stage-waiting" id="discussion-host-waiting" role="status">Esperando al anfitrión…</p>
+        <div class="connection-pill" data-connection-state="connecting" aria-live="polite">
+          <span class="connection-pill__dot" aria-hidden="true"></span>
+          <span class="connection-pill__text">Conectando</span>
+        </div>
+        <div class="room-actions">
+          <button class="button button--primary button--full game-reset-button" id="reset-before-discussion" type="button" hidden>Reiniciar partida</button>
+          <button class="button button--danger button--full leave-room-trigger" type="button">Salir de la sala</button>
+        </div>
+        <div class="notice" id="discussion-notice" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+
+    <section class="screen screen--discussion" id="discussion-screen" data-screen hidden aria-labelledby="live-discussion-title">
+      <div class="discussion-layout">
+        <header class="discussion-header">
+          <div><p class="eyebrow">Las campanas de San Jerónimo</p><h2 id="live-discussion-title">Conversación del pueblo</h2></div>
+          <div class="discussion-timer" id="discussion-timer" role="timer" aria-live="off"><strong id="timer-value">04:00</strong><span id="timer-status">Tiempo restante</span></div>
+        </header>
+        <div class="discussion-toolbar">
+          <ul class="compact-player-list" id="chat-player-list" aria-label="Jugadores en la conversación"></ul>
+          <div class="connection-pill" data-connection-state="connecting" aria-live="polite"><span class="connection-pill__dot" aria-hidden="true"></span><span class="connection-pill__text">Conectando</span></div>
+          <button class="button button--secondary" id="view-private-clues" type="button">Ver mis pistas</button>
+          <button class="button button--primary" id="back-to-decision" type="button" hidden>Volver a la decisión</button>
+        </div>
+        <div class="chat-panel">
+          <div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-relevant="additions" tabindex="0">
+            <p class="chat-empty" id="chat-empty">Todavía no hay mensajes. Pueden conversar aquí o utilizar una llamada externa.</p>
+          </div>
+          <button class="new-messages-button" id="new-messages" type="button" hidden>Hay mensajes nuevos · Ir al final</button>
+          <div class="discussion-ended" id="discussion-ended" role="status" hidden><strong>La conversación ha terminado</strong><span>El historial permanecerá disponible para consulta.</span></div>
+          <form class="chat-form" id="chat-form">
+            <label for="chat-input">Mensaje público</label>
+            <textarea id="chat-input" rows="2" maxlength="300" placeholder="Comparte una pista o haz una pregunta…" aria-describedby="chat-counter chat-guidance"></textarea>
+            <div class="chat-form__footer"><span id="chat-guidance">Enter envía · Shift + Enter crea una línea</span><output id="chat-counter" for="chat-input">0/300</output></div>
+            <button class="button button--primary" id="send-chat" type="submit">Enviar</button>
+          </form>
+          <p class="chat-lock-notice">El chat se bloqueará cuando el temporizador llegue a cero.</p>
+          <div class="notice" id="chat-notice" role="status" aria-live="polite" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="screen" id="voting-ready" data-screen hidden aria-labelledby="voting-ready-title">
+      <div class="panel panel--wide ready-panel">
+        <div class="ready-symbol" aria-hidden="true">◇</div>
+        <p class="eyebrow">La plaza guarda silencio</p>
+        <h2 id="voting-ready-title">Es momento de decidir</h2>
+        <p class="ready-message">La conversación terminó. Recuerda las contradicciones que escuchaste y elige cuidadosamente.</p>
+        <ul class="ready-player-list" id="voting-player-list" aria-label="Jugadores que decidirán"></ul>
+        <p class="phase-notice">La votación comenzará automáticamente en un instante.</p>
+        <button class="button button--secondary button--full review-chat-button" type="button">Revisar el chat</button>
+        <div class="notice" id="voting-notice" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+
+    <section class="screen" id="voting-screen" data-screen hidden aria-labelledby="voting-title">
+      <div class="panel panel--wide voting-panel">
+        <div class="voting-heading">
+          <div><p class="eyebrow" id="voting-round-label">Votación secreta</p><h2 id="voting-title">¿Quién es la criatura?</h2></div>
+          <div class="discussion-timer voting-timer" id="voting-timer" role="timer"><strong id="voting-timer-value">01:00</strong><span id="voting-timer-status">Tiempo restante</span></div>
+        </div>
+        <p class="panel__intro" id="voting-explanation">Selecciona al jugador que consideras sospechoso. Tu elección permanecerá oculta hasta el resultado final.</p>
+        <p class="voting-progress" id="voting-progress" aria-live="polite">0 de 3 jugadores ya votaron</p>
+        <form id="vote-form">
+          <fieldset class="candidate-grid" id="candidate-grid"><legend class="sr-only">Selecciona un sospechoso</legend></fieldset>
+          <button class="button button--primary button--full" id="prepare-vote" type="submit" disabled>Confirmar voto</button>
+        </form>
+        <div class="vote-confirmed" id="vote-confirmed" hidden><span aria-hidden="true">✓</span><strong>Tu voto fue registrado</strong><p>Es definitivo y permanecerá secreto hasta que termine la votación.</p></div>
+        <div class="voting-tools"><button class="button button--secondary review-chat-button" type="button">Revisar el chat</button><button class="button button--secondary view-clues-button" type="button">Ver mis pistas</button></div>
+        <div class="connection-pill" data-connection-state="connecting" aria-live="polite"><span class="connection-pill__dot" aria-hidden="true"></span><span class="connection-pill__text">Conectando</span></div>
+        <div class="notice" id="vote-notice" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+
+    <section class="screen" id="calculating-result" data-screen hidden aria-labelledby="calculating-title">
+      <div class="panel ready-panel"><div class="counting-symbol" aria-hidden="true"><span></span><span></span><span></span></div><p class="eyebrow">Las papeletas están cerradas</p><h2 id="calculating-title">El pueblo cuenta los votos…</h2><p class="ready-message">El resultado ya está siendo calculado por el servidor.</p></div>
+    </section>
+
+    <section class="screen" id="game-result" data-screen hidden aria-labelledby="result-title">
+      <div class="panel panel--wide result-panel">
+        <header class="result-hero" id="result-hero"><p class="eyebrow">La noche llega a su fin</p><h2 id="result-title"></h2><p id="result-message"></p></header>
+        <div class="result-summary"><p><span>La criatura era</span><strong id="result-creature"></strong></p><p><span>El pueblo señaló a</span><strong id="result-selected"></strong></p><p><span>Abstenciones</span><strong id="result-abstentions"></strong></p></div>
+        <section class="result-section" aria-labelledby="roles-result-title"><h3 id="roles-result-title">Roles revelados</h3><div class="result-role-grid" id="result-role-grid"></div></section>
+        <section class="result-section" aria-labelledby="votes-result-title"><h3 id="votes-result-title">Papeletas y conteo final</h3><div class="result-rounds" id="result-rounds"></div></section>
+        <section class="story-conclusion" aria-labelledby="conclusion-title"><p class="eyebrow">La verdad de San Jerónimo</p><h3 id="conclusion-title">Lo que ocurrió aquella noche</h3><p id="story-conclusion"></p></section>
+        <div class="result-actions"><button class="button button--primary" id="play-again" type="button" hidden>Volver a jugar</button><p class="stage-waiting" id="play-again-waiting">Esperando a que el anfitrión prepare una nueva partida…</p><button class="button button--danger" id="return-to-menu" type="button">Regresar al menú</button></div>
+        <div class="notice" id="result-notice" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+
+    <section class="screen" id="how-to-play" data-screen hidden aria-labelledby="how-title">
+      <div class="panel panel--wide">
+        <button class="back-button" type="button" data-go-to="menu" aria-label="Volver al menú principal">
+          <span aria-hidden="true">←</span> Volver
+        </button>
+        <p class="eyebrow">Antes de que anochezca</p>
+        <h2 id="how-title">Cómo jugar</h2>
+        <p class="panel__intro">Observa, conversa y decide en quién confiar.</p>
+        <ol class="rules">
+          <li><span>01</span><p><strong>Una criatura se oculta.</strong> Un jugador recibe en secreto el papel de la criatura.</p></li>
+          <li><span>02</span><p><strong>Exploren San Jerónimo.</strong> Visiten sus cinco zonas y conserven hasta dos pistas en el cuaderno privado.</p></li>
+          <li><span>03</span><p><strong>El pueblo conversa.</strong> Comparen pistas, escuchen historias y descubran contradicciones.</p></li>
+          <li><span>04</span><p><strong>Llega la votación.</strong> Al final, todos señalan a la persona que consideran sospechosa.</p></li>
+          <li><span>05</span><p><strong>El engaño decide.</strong> El pueblo gana si descubre a la criatura; ella gana si logra confundir al grupo.</p></li>
+        </ol>
+        <button class="button button--primary button--full" type="button" data-go-to="menu">Volver al menú</button>
+      </div>
+    </section>
+
+    <section class="screen" id="about-prototype" data-screen hidden aria-labelledby="about-title">
+      <div class="panel panel--wide prototype-panel">
+        <button class="back-button" type="button" data-go-to="menu" aria-label="Volver al menú principal">
+          <span aria-hidden="true">←</span> Volver
+        </button>
+        <p class="eyebrow">Beta pública experimental</p>
+        <h2 id="about-title">Acerca del prototipo</h2>
+        <p class="panel__intro">El Pueblo Oculto es un juego social multijugador en desarrollo. Esta versión sirve para validar su recorrido completo con grupos reales.</p>
+        <dl class="prototype-facts">
+          <div><dt>Versión</dt><dd>0.9.0-beta.1</dd></div>
+          <div><dt>Jugadores</dt><dd>3 a 6 personas</dd></div>
+          <div><dt>Persistencia</dt><dd>Las salas viven solo mientras el servidor está activo.</dd></div>
+          <div><dt>Servidor gratuito</dt><dd>Puede tardar cerca de un minuto en despertar después de un periodo sin actividad.</dd></div>
+        </dl>
+        <p class="privacy-note"><strong>Al reportar:</strong> no compartas códigos de sala, nombres, mensajes, roles, pistas, votos ni otros datos privados de la partida.</p>
+        <button class="button button--secondary button--full" id="copy-safe-report" type="button">Copiar reporte técnico seguro</button>
+        <div class="notice" id="report-notice" role="status" aria-live="polite" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="app-toast notice" id="app-toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog class="clue-dialog" id="private-clues-dialog" aria-labelledby="private-clues-dialog-title">
+    <div class="clue-dialog__panel">
+      <div class="clue-dialog__heading"><div><p class="eyebrow">Consulta privada</p><h2 id="private-clues-dialog-title">Mis pistas</h2></div><button class="dialog-close" id="close-private-clues" type="button" aria-label="Cerrar pistas">×</button></div>
+      <p class="privacy-warning">Protege tu pantalla antes de revisar esta información.</p>
+      <p class="notebook-count" id="notebook-count">0/2 pistas</p>
+      <div id="discussion-evidence"></div>
+      <p class="notebook-empty" id="notebook-empty">Todavía no encontraste pistas. Explora una zona e investiga sus objetos.</p>
+      <div class="clue-card-list" id="discussion-private-clues"></div>
+      <div id="discussion-observation"></div>
+      <p class="clue-instructions" id="discussion-clue-instructions"></p>
+    </div>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="vote-dialog" aria-labelledby="vote-dialog-title" aria-describedby="vote-dialog-description">
+    <div class="confirm-dialog__panel"><p class="eyebrow">Confirmación secreta</p><h2 id="vote-dialog-title">Confirmar voto</h2><p id="vote-dialog-description"></p><div class="dialog-actions"><button class="button button--secondary" id="cancel-vote" type="button">Cancelar</button><button class="button button--primary" id="confirm-vote" type="button">Confirmar voto definitivo</button></div></div>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="leave-dialog" aria-labelledby="leave-dialog-title" aria-describedby="leave-dialog-description">
+    <form method="dialog" class="confirm-dialog__panel">
+      <p class="eyebrow">Abandonar la reunión</p>
+      <h2 id="leave-dialog-title">¿Salir de la sala?</h2>
+      <p id="leave-dialog-description">Perderás tu lugar y, si eres anfitrión, otra persona ocupará ese puesto.</p>
+      <div class="dialog-actions">
+        <button class="button button--secondary" value="cancel">Cancelar</button>
+        <button class="button button--danger" id="confirm-leave" value="confirm">Salir de la sala</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="sr-only" id="app-announcer" aria-live="polite" aria-atomic="true"></div>
+  <noscript><p class="noscript">Necesitas activar JavaScript para navegar por este prototipo.</p></noscript>
+</body>
+</html>

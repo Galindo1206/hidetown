@@ -1,0 +1,117 @@
+@media (min-width: 36rem) {
+  .screen { width: min(100% - 3rem, var(--content-width)); }
+  .panel { padding: 2.5rem; }
+  .panel--wide { width: min(calc(100vw - 3rem), var(--content-wide)); }
+  .rules { grid-template-columns: 1fr 1fr; gap: 1.25rem 2rem; }
+  .rules li:last-child { grid-column: 1 / -1; max-width: 50%; }
+  .room-actions, .dialog-actions { grid-template-columns: 1fr 1fr; }
+  .room-actions .button--primary { order: 2; }
+  .ready-panel .room-actions { grid-template-columns: 1fr; }
+  .role-controls { grid-template-columns: 1fr 1fr; }
+  .role-controls #confirm-role { grid-column: 1 / -1; }
+  .clue-controls { grid-template-columns: 1fr 1fr; }
+  .clue-controls #confirm-clues { grid-column: 1 / -1; }
+}
+
+@media (min-width: 64rem) {
+  .screen--menu { align-items: flex-start; text-align: left; }
+  .screen--menu .tagline { text-wrap: pretty; }
+  .menu-actions { width: 21rem; }
+  .menu-emblem { margin-left: .35rem; }
+  .village { transform: translateX(-25%); }
+}
+
+@media (max-height: 42rem) {
+  .screen { justify-content: flex-start; padding-top: max(4.5rem, env(safe-area-inset-top)); }
+  .screen--loading, .screen--menu { justify-content: center; }
+  .menu-emblem { display: none; }
+  .screen--menu .game-title { font-size: clamp(2.8rem, 12vh, 4rem); }
+  .tagline { margin-bottom: var(--space-4); }
+  .version { margin-top: var(--space-4); }
+}
+
+@media (max-width: 22rem) {
+  .screen { width: calc(100% - 1.25rem); }
+  .panel { padding: 1.15rem; }
+  .sound-toggle__text { display: none; }
+  .game-title { font-size: 3rem; }
+  .room-code-card { align-items: stretch; flex-direction: column; }
+  .copy-button { width: 100%; }
+  .copy-feedback { text-align: left; }
+  .player-item { grid-template-columns: 2.2rem minmax(0, 1fr) auto; padding-inline: .65rem; gap: .55rem; }
+  .player-avatar { width: 2.2rem; }
+  .role-card { min-height: 21rem; padding: 1rem; }
+  .role-card__back, .role-card__face { min-height: 18.5rem; }
+  .candidate-option label { grid-template-columns: 2.35rem minmax(0, 1fr); }
+  .candidate-choice { grid-column: 2; min-width: 0; text-align: left; }
+  .clue-card { padding: 1rem; }
+}
+
+@media (max-width: 46rem) {
+  .connection-alert { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .connection-alert #connection-alert-retry, .connection-alert #connection-alert-home { grid-column: 1 / -1; width: 100%; }
+  .prototype-facts div { grid-template-columns: 1fr; gap: .35rem; }
+  .discussion-facts { grid-template-columns: 1fr; }
+  .discussion-header { align-items: stretch; flex-direction: column; }
+  .discussion-timer { width: 100%; }
+  .discussion-toolbar { align-items: stretch; flex-wrap: wrap; }
+  .compact-player-list { flex-basis: 100%; }
+  .discussion-toolbar .connection-pill { margin-right: auto; }
+  .chat-form { grid-template-columns: 1fr; }
+  .chat-form .button { grid-column: 1; grid-row: auto; }
+  .chat-form__footer { grid-column: 1; }
+  .new-messages-button { bottom: 14.5rem; }
+  .voting-heading { flex-direction: column; }
+  .voting-timer { width: 100%; }
+  .result-summary, .result-actions { grid-template-columns: 1fr; }
+  .result-actions .stage-waiting { grid-column: 1; }
+  .result-ballots li { align-items: flex-start; flex-direction: column; gap: .2rem; }
+  .screen--discussion { width: calc(100% - .75rem); padding-bottom: max(.4rem, env(safe-area-inset-bottom)); }
+  .discussion-layout { min-height: calc(100svh - 5rem); min-height: calc(100dvh - 5rem); }
+  .chat-panel { padding: .35rem; }
+  .chat-messages { scroll-padding-bottom: 8rem; }
+  .chat-form { padding-bottom: max(var(--space-3), env(safe-area-inset-bottom)); }
+}
+
+@media (max-height: 38rem) and (min-width: 46rem) {
+  .discussion-layout { min-height: 34rem; }
+}
+
+@media (max-height: 42rem) and (max-width: 46rem) {
+  .screen--discussion { padding-top: max(3.7rem, env(safe-area-inset-top)); }
+  .discussion-layout { min-height: calc(100dvh - 4.1rem); gap: .4rem; }
+  .discussion-header { padding: .55rem .75rem; }
+  .discussion-header .eyebrow { display: none; }
+  .discussion-toolbar { padding: .4rem; }
+  .compact-player-list { display: none; }
+  .chat-form label, .chat-lock-notice { display: none; }
+  .chat-form textarea { min-height: 2.8rem; }
+}
+
+@media (min-width: 75rem) {
+  .panel--wide { --content-wide: 52rem; }
+  .screen--discussion { width: min(calc(100% - 4rem), 76rem); }
+  .village { width: 52rem; }
+}
+
+@media (forced-colors: active) {
+  :focus-visible { outline: 3px solid Highlight; }
+  .panel, .button, .candidate-option label, .clue-card, .role-card, .chat-message { border: 1px solid CanvasText; }
+  .candidate-option input:checked + label { outline: 3px solid Highlight; }
+  .connection-pill__dot, .candidate-avatar { forced-color-adjust: none; }
+}
+
+@media (prefers-contrast: more) {
+  :root { --color-paper-muted: #ddd5c3; }
+  .panel, .chat-panel, .discussion-header, .discussion-toolbar { border-color: rgba(233, 222, 194, .55); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  .mist { animation: none; }
+}
