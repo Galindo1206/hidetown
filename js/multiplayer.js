@@ -24,6 +24,7 @@
       this.chatMessageIds = new Set();
       this.serverTimeOffset = 0;
       this.hasVoted = false;
+      this.reconstructionConfirmedVersion = null;
       this.confirmations = { story: false, role: false, exploration: false };
       this.restoreInProgress = false;
       this.pendingRequests = new Map();
@@ -97,10 +98,11 @@
         this.emitLocal("game-started", room);
       });
       this.socket.on("story:presented", (payload) => this.emitLocal("story-presented", payload));
-      this.socket.on("game:state", ({ room, confirmations, voting, exploration }) => {
+      this.socket.on("game:state", ({ room, confirmations, voting, exploration, reconstruction }) => {
         if (confirmations) this.confirmations = { ...this.confirmations, ...confirmations };
         if (voting) this.hasVoted = Boolean(voting.hasVoted);
         if (exploration) this.privateExploration = { ...exploration, investigatedObjectIds: [...(exploration.investigatedObjectIds || [])] };
+        if (reconstruction) this.reconstructionConfirmedVersion = reconstruction.confirmedVersion ?? null;
         this.acceptRoomUpdate(room);
         this.emitLocal("game-state", { room, confirmations: { ...this.confirmations }, exploration: this.privateExploration });
       });
@@ -137,6 +139,18 @@
       this.socket.on("exploration:location-updated", (payload) => {
         this.acceptRoomUpdate(payload.room);
         this.emitLocal("exploration-location", payload);
+      });
+      this.socket.on("exploration:player-state", ({ playerId, position }) => {
+        const player = this.currentRoom?.players?.find((item) => item.id === playerId);
+        if (player && position) player.explorationState = { ...position };
+        this.emitLocal("exploration-player-state", { playerId, position: position ? { ...position } : null });
+      });
+      this.socket.on("exploration:scene-changed", (payload) => {
+        this.acceptRoomUpdate(payload.room);
+        if (payload.playerId === this.session?.playerId && this.privateExploration) {
+          this.privateExploration = { ...this.privateExploration, ...payload.position, location: payload.room.players.find((item) => item.id === payload.playerId)?.zoneId };
+        }
+        this.emitLocal("exploration-scene-changed", payload);
       });
       this.socket.on("exploration:search-started", (search) => {
         this.privateExploration = { ...(this.privateExploration || {}), activeSearch: { ...search } };
@@ -177,6 +191,14 @@
         this.acceptRoomUpdate(payload.room);
         this.emitLocal("discussion-finished", payload);
       });
+      ["reconstruction:started", "reconstruction:board-updated", "reconstruction:progress", "reconstruction:locked", "reconstruction:result"].forEach((eventName) => {
+        this.socket.on(eventName, (payload) => {
+          this.syncServerTime(payload.serverTime);
+          if (payload.room) this.acceptRoomUpdate(payload.room);
+          this.emitLocal(eventName.replace(":", "-"), payload);
+        });
+      });
+      this.socket.on("reconstruction:error", (error) => this.emitLocal("reconstruction-error", error));
       this.socket.on("game:ready-for-voting", (payload) => {
         this.syncServerTime(payload.serverTime);
         this.acceptRoomUpdate(payload.room);
@@ -302,9 +324,15 @@
       return this.request("exploration:ready");
     }
 
-    async moveDuringExploration(zoneId) {
-      const result = await this.request("exploration:move", { zoneId });
-      this.privateExploration = { ...(this.privateExploration || {}), location: result.zoneId };
+    async sendExplorationPosition(position) {
+      const result = await this.request("exploration:position", position);
+      this.privateExploration = { ...(this.privateExploration || {}), ...result.position };
+      return result;
+    }
+
+    async transitionExplorationScene(targetSceneId) {
+      const result = await this.request("exploration:transition", { targetSceneId });
+      this.privateExploration = { ...(this.privateExploration || {}), ...result.position };
       return result;
     }
 
@@ -318,6 +346,24 @@
 
     startDiscussion() {
       return this.request("discussion:start");
+    }
+
+    placeReconstructionClue(clueId, slot, boardVersion) {
+      return this.request("reconstruction:place", { clueId, slot, boardVersion });
+    }
+
+    moveReconstructionClue(clueId, slot, boardVersion) {
+      return this.request("reconstruction:move", { clueId, slot, boardVersion });
+    }
+
+    removeReconstructionClue(clueId, boardVersion) {
+      return this.request("reconstruction:remove", { clueId, boardVersion });
+    }
+
+    async confirmReconstruction(boardVersion) {
+      const result = await this.request("reconstruction:confirm", { boardVersion });
+      this.reconstructionConfirmedVersion = boardVersion;
+      return result;
     }
 
     sendChatMessage(text) {
@@ -341,7 +387,7 @@
         return Promise.reject(new MultiplayerError("SERVER_DISCONNECTED", "No hay conexión con el servidor."));
       }
 
-      const deduplicate = eventName !== "chat:send";
+      const deduplicate = !["chat:send", "exploration:position"].includes(eventName);
       if (deduplicate && this.pendingRequests.has(eventName)) return this.pendingRequests.get(eventName);
       const operation = new Promise((resolve, reject) => {
         this.socket.timeout(5000).emit(eventName, payload, (timeoutError, response) => {
@@ -378,6 +424,7 @@
 
     acceptRoomUpdate(room) {
       if (!room || !this.session || room.code !== this.session.roomCode) return;
+      if (this.currentRoom?.reconstruction?.version !== room.reconstruction?.version) this.reconstructionConfirmedVersion = null;
       this.currentRoom = room;
       if (room.state === "waiting") this.clearPrivateGameData();
       this.emitLocal("room-updated", room);
@@ -452,6 +499,7 @@
       this.chatMessageIds.clear();
       this.serverTimeOffset = 0;
       this.hasVoted = false;
+      this.reconstructionConfirmedVersion = null;
       this.confirmations = { story: false, role: false, exploration: false };
     }
   }

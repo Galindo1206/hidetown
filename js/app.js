@@ -7,13 +7,19 @@
   const soundButton = document.querySelector("#sound-toggle");
   const multiplayer = new window.MultiplayerClient();
   const audio = new window.AudioManager();
+  const explorationGame = new window.ExplorationGame({
+    multiplayer,
+    audio,
+    onError(error) { showNotice(document.querySelector("#exploration-notice"), error.message, "error"); }
+  });
   let copyFeedbackTimer;
   let roleWasRevealed = false;
   let explorationClockInterval;
-  let currentExplorationZone = null;
   let discussionClockInterval;
   let votingClockInterval;
   let pendingVoteCandidate = null;
+  let selectedReconstructionClue = null;
+  let pendingReconstructionChange = null;
   let reviewReturnScreen = "voting-ready";
   let connectionAlertTimer;
   let connectionWakeTimer;
@@ -382,7 +388,7 @@
   function renderExplorationReady(room) {
     const exploration = room.exploration;
     if (!exploration) return;
-    document.querySelector("#exploration-duration").textContent = `${room.explorationDurationSeconds || 60} segundos`;
+    document.querySelector("#exploration-duration").textContent = `${room.explorationDurationSeconds || 90} segundos`;
     document.querySelector("#exploration-ready-progress").textContent = `${exploration.readyCount} de ${exploration.total} jugadores preparados`;
     document.querySelector("#exploration-zone-summary").replaceChildren(...exploration.zones.map((zone) => {
       const item = document.createElement("li");
@@ -394,69 +400,6 @@
     document.querySelector("#exploration-ready-waiting").hidden = !confirmed;
   }
 
-  function playersInZone(room, zoneId) {
-    return room.players.filter((player) => player.zoneId === zoneId);
-  }
-
-  function createMapZone(room, zone) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "map-zone";
-    button.dataset.zone = zone.id;
-    const ownLocation = multiplayer.privateExploration?.location;
-    if (ownLocation === zone.id) button.classList.add("is-current");
-    const symbol = document.createElement("span");
-    symbol.className = "map-zone__symbol";
-    symbol.setAttribute("aria-hidden", "true");
-    symbol.textContent = zone.symbol;
-    const name = document.createElement("strong");
-    name.textContent = zone.name;
-    const present = playersInZone(room, zone.id);
-    const players = document.createElement("span");
-    players.className = "map-zone__players";
-    players.textContent = present.length ? present.map((player) => player.id === multiplayer.session?.playerId ? `${player.name} (tú)` : player.name).join(", ") : "Sin jugadores";
-    button.setAttribute("aria-label", `${zone.name}. ${present.length} jugadores presentes`);
-    button.append(symbol, name, players);
-    return button;
-  }
-
-  function renderZoneScene(room, zone) {
-    const map = document.querySelector("#village-map");
-    const scene = document.querySelector("#zone-scene");
-    if (!zone) {
-      map.hidden = false;
-      scene.hidden = true;
-      return;
-    }
-    map.hidden = true;
-    scene.hidden = false;
-    document.querySelector("#zone-scene-symbol").textContent = zone.symbol;
-    document.querySelector("#zone-scene-title").textContent = zone.name;
-    const present = playersInZone(room, zone.id);
-    document.querySelector("#zone-presence").textContent = present.length ? `Presentes: ${present.map((player) => player.name).join(", ")}` : "No hay otros jugadores en esta zona.";
-    const privateState = multiplayer.privateExploration || {};
-    const investigated = new Set(privateState.investigatedObjectIds || []);
-    const atLimit = (privateState.clueCount || 0) >= 2;
-    const grid = document.querySelector("#investigation-object-grid");
-    grid.replaceChildren(...zone.objects.map((item) => {
-      const article = document.createElement("article");
-      article.className = "investigation-object";
-      if (investigated.has(item.id)) article.classList.add("is-investigated");
-      const title = document.createElement("h4");
-      title.textContent = item.name;
-      const description = document.createElement("p");
-      description.textContent = item.description;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "button button--primary button--full investigate-object";
-      button.dataset.objectId = item.id;
-      const searching = privateState.activeSearch?.objectId === item.id;
-      button.textContent = searching ? "Investigando…" : investigated.has(item.id) ? "Ya investigado" : atLimit ? "Cuaderno completo" : "Investigar";
-      button.disabled = Boolean(privateState.activeSearch) || investigated.has(item.id) || atLimit;
-      article.append(title, description, button);
-      return article;
-    }));
-  }
 
   function updateExplorationClock(room) {
     const endsAt = room.exploration?.endsAt;
@@ -464,7 +407,7 @@
     document.querySelector("#exploration-timer-value").textContent = formatClock(remaining);
     const timer = document.querySelector("#exploration-timer");
     timer.dataset.warning = remaining <= 5 ? "final" : remaining <= 15 ? "thirty" : remaining <= 30 ? "minute" : "normal";
-    const threshold = remaining <= 5 ? 5 : remaining <= 15 ? 15 : remaining <= 30 ? 30 : null;
+    const threshold = remaining <= 5 ? 5 : remaining <= 10 ? 10 : remaining <= 15 ? 15 : remaining <= 30 ? 30 : null;
     const warningKey = threshold ? `exploration:${endsAt}:${threshold}` : null;
     if (warningKey && remaining > 0 && !timerWarningsPlayed.has(warningKey)) {
       timerWarningsPlayed.add(warningKey);
@@ -479,9 +422,6 @@
     if (!exploration) return;
     const privateState = multiplayer.privateExploration || {};
     document.querySelector("#exploration-clue-count").textContent = `${privateState.clueCount || 0}/2 pistas`;
-    document.querySelector("#village-map").replaceChildren(...exploration.zones.map((zone) => createMapZone(room, zone)));
-    const zone = exploration.zones.find((item) => item.id === currentExplorationZone);
-    renderZoneScene(room, zone);
     window.clearInterval(explorationClockInterval);
     updateExplorationClock(room);
     explorationClockInterval = window.setInterval(() => updateExplorationClock(multiplayer.currentRoom || room), 250);
@@ -605,12 +545,113 @@
     document.querySelector("#send-chat").disabled = locked;
   }
 
+  function createReconstructionClue(clue, locked) {
+    const card = document.createElement("div");
+    card.className = "reconstruction-clue";
+    const title = document.createElement("strong");
+    title.textContent = clue.title;
+    const text = document.createElement("p");
+    text.textContent = clue.text;
+    const meta = document.createElement("span");
+    meta.textContent = `${clue.zoneName} · ${clue.objectName} · de ${clue.ownerName}`;
+    card.append(title, text, meta);
+    if (!locked && clue.ownerId === multiplayer.session?.playerId) {
+      const move = document.createElement("button");
+      move.type = "button";
+      move.className = "button button--secondary reconstruction-select-placed";
+      move.dataset.clueId = clue.id;
+      move.textContent = "Mover mi pista";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "button button--danger reconstruction-remove";
+      remove.dataset.clueId = clue.id;
+      remove.textContent = "Retirar";
+      card.append(move, remove);
+    }
+    return card;
+  }
+
+  function renderReconstruction(room) {
+    const reconstruction = room.reconstruction;
+    if (!reconstruction) return;
+    const ownId = multiplayer.session?.playerId;
+    const placedIds = new Set(reconstruction.slots.flatMap((slot) => slot.clue ? [slot.clue.id] : []));
+    if (selectedReconstructionClue && !multiplayer.privateClues?.cards.some((clue) => clue.id === selectedReconstructionClue)) selectedReconstructionClue = null;
+    document.querySelector("#reconstruction-version").textContent = `Versión ${reconstruction.version}`;
+    document.querySelector("#reconstruction-progress").textContent = `${reconstruction.progress.confirmed} de ${reconstruction.progress.total} jugadores confirmaron esta versión`;
+    const confirm = document.querySelector("#confirm-reconstruction");
+    confirm.hidden = reconstruction.locked;
+    confirm.disabled = multiplayer.reconstructionConfirmedVersion === reconstruction.version;
+    confirm.textContent = confirm.disabled ? "Estás de acuerdo con esta versión" : "Estoy de acuerdo con este orden";
+
+    const board = reconstruction.slots.map((slot) => {
+      const item = document.createElement("li");
+      item.className = "reconstruction-slot";
+      item.dataset.slot = String(slot.id);
+      const number = document.createElement("span");
+      number.className = "reconstruction-slot__number";
+      number.textContent = String(slot.id);
+      number.setAttribute("aria-hidden", "true");
+      const body = document.createElement("div");
+      body.className = "reconstruction-slot__body";
+      const title = document.createElement("strong");
+      title.textContent = slot.title;
+      body.append(title);
+      if (slot.clue) body.append(createReconstructionClue(slot.clue, reconstruction.locked));
+      else {
+        const empty = document.createElement("span");
+        empty.textContent = selectedReconstructionClue ? "Seleccionar esta etapa" : "Sin pista";
+        body.append(empty);
+      }
+      if (!reconstruction.locked && selectedReconstructionClue && (!slot.clue || slot.clue.id === selectedReconstructionClue)) {
+        item.classList.add("is-target");
+        item.tabIndex = 0;
+        item.setAttribute("role", "button");
+        item.setAttribute("aria-label", `Colocar la pista seleccionada en ${slot.title}`);
+      }
+      item.append(number, body);
+      return item;
+    });
+    document.querySelector("#reconstruction-board").replaceChildren(...board);
+
+    const available = (multiplayer.privateClues?.cards || []).filter((clue) => !placedIds.has(clue.id));
+    const tray = available.map((clue) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tray-clue";
+      button.dataset.clueId = clue.id;
+      button.setAttribute("aria-pressed", String(selectedReconstructionClue === clue.id));
+      button.disabled = reconstruction.locked;
+      const title = document.createElement("strong");
+      title.textContent = clue.title;
+      const meta = document.createElement("span");
+      meta.textContent = `${clue.zoneName} · ${clue.objectName}`;
+      button.append(title, meta);
+      return button;
+    });
+    if (!tray.length) {
+      const empty = document.createElement("p");
+      empty.className = "notebook-empty";
+      empty.textContent = "No tienes pistas sin colocar.";
+      tray.push(empty);
+    }
+    document.querySelector("#reconstruction-tray-list").replaceChildren(...tray);
+
+    const resultPanel = document.querySelector("#reconstruction-result");
+    resultPanel.hidden = !reconstruction.result;
+    if (reconstruction.result) {
+      document.querySelector("#reconstruction-result-title").textContent = `${reconstruction.result.passed ? "Reconstrucción aprobada" : "Reconstrucción incompleta"} · ${reconstruction.result.score}/5`;
+      document.querySelector("#reconstruction-result-message").textContent = reconstruction.result.message;
+    }
+  }
+
   function renderLiveDiscussion(room) {
     document.querySelector("#live-discussion-title").textContent = room.story?.title || "Conversación del pueblo";
     renderCompactPlayers(room);
     renderChatHistory();
     const locked = room.state !== "discussion";
     setChatLocked(locked);
+    renderReconstruction(room);
     document.querySelector("#back-to-decision").hidden = !["ready_for_voting", "voting", "vote_tiebreaker", "calculating_result", "game_finished"].includes(room.state);
     startDiscussionClock(room);
   }
@@ -764,19 +805,79 @@
     return section;
   }
 
+  function createFinalReconstructionSlot(slot) {
+    const item = document.createElement("li");
+    item.className = "final-reconstruction-slot";
+    item.dataset.correct = String(slot.correct);
+    const heading = document.createElement("div");
+    const number = document.createElement("span");
+    number.textContent = String(slot.id);
+    number.setAttribute("aria-hidden", "true");
+    const title = document.createElement("strong");
+    title.textContent = slot.title;
+    const status = document.createElement("b");
+    status.textContent = slot.correct ? "✓ Posición correcta" : "✗ Posición incorrecta";
+    heading.append(number, title, status);
+    item.append(heading);
+    if (!slot.clue) {
+      const empty = document.createElement("p");
+      empty.textContent = "Esta etapa quedó vacía.";
+      item.append(empty);
+      return item;
+    }
+    const clueTitle = document.createElement("h4");
+    clueTitle.textContent = slot.clue.title;
+    const clueText = document.createElement("p");
+    clueText.textContent = slot.clue.text;
+    const details = document.createElement("ul");
+    [
+      slot.clue.authentic ? "✓ Pista auténtica" : "✗ Pista distorsionada",
+      `Ubicación correcta: ${slot.clue.canonicalStep}. ${slot.clue.canonicalStepTitle}`,
+      `${slot.clue.zoneName} · ${slot.clue.objectName}`,
+      `Colocada por ${slot.clue.ownerName}`
+    ].forEach((text) => {
+      const detail = document.createElement("li");
+      detail.textContent = text;
+      details.append(detail);
+    });
+    item.append(clueTitle, clueText, details);
+    return item;
+  }
+
   function renderGameResult(room) {
     const result = room.result;
     if (!result) return;
     window.clearInterval(votingClockInterval);
-    document.querySelector("#result-hero").dataset.winner = result.winner;
-    document.body.dataset.outcome = result.winner;
+    const winnerTeam = result.winnerTeam || result.winner;
+    document.querySelector("#result-hero").dataset.winner = winnerTeam;
+    document.body.dataset.outcome = winnerTeam;
     document.querySelector("#result-title").textContent = result.title;
     document.querySelector("#result-message").textContent = result.message;
     document.querySelector("#result-creature").textContent = result.creatureName;
     document.querySelector("#result-selected").textContent = result.selectedPlayerName || (result.tiedPlayerNames.length ? `Empate: ${result.tiedPlayerNames.join(", ")}` : "Sin decisión");
     document.querySelector("#result-abstentions").textContent = String(result.totalAbstentions);
+    const storyObjective = document.querySelector("#result-objective-story");
+    storyObjective.dataset.passed = String(result.reconstruction.passed);
+    storyObjective.querySelector(".result-objective__icon").textContent = result.reconstruction.passed ? "✓" : "✗";
+    document.querySelector("#result-reconstruction-score").textContent = `${result.reconstruction.score}/5 · requisito ${result.reconstruction.required}/5`;
+    document.querySelector("#result-reconstruction-status").textContent = result.reconstruction.passed ? "Historia reconstruida · Objetivo completado" : "Historia incompleta · Objetivo no completado";
+    const accusationObjective = document.querySelector("#result-objective-accusation");
+    accusationObjective.dataset.passed = String(result.accusation.creatureIdentified);
+    accusationObjective.querySelector(".result-objective__icon").textContent = result.accusation.creatureIdentified ? "✓" : "✗";
+    document.querySelector("#result-accusation-player").textContent = result.accusation.accusedPlayer
+      ? `${result.accusation.accusedPlayer.name} · ${result.accusation.accusedPlayer.role}`
+      : result.accusation.persistentTie ? "Sin sospechoso único" : "Sin acusación";
+    document.querySelector("#result-accusation-status").textContent = result.accusation.creatureIdentified
+      ? "Criatura identificada · Acusación correcta"
+      : result.accusation.persistentTie ? "Empate persistente · Objetivo no completado" : "Acusación incorrecta · Objetivo no completado";
     document.querySelector("#result-role-grid").replaceChildren(...result.players.map(createResultRoleCard));
     document.querySelector("#result-rounds").replaceChildren(...result.rounds.map(createResultRound));
+    document.querySelector("#final-reconstruction-board").replaceChildren(...result.reconstruction.slots.map(createFinalReconstructionSlot));
+    document.querySelector("#true-order-list").replaceChildren(...result.reconstruction.trueOrder.map((step) => {
+      const item = document.createElement("li");
+      item.textContent = step.text;
+      return item;
+    }));
     document.querySelector("#story-conclusion").textContent = result.storyConclusion;
     const currentPlayer = room.players.find((player) => player.id === multiplayer.session?.playerId);
     document.querySelector("#play-again").hidden = !currentPlayer?.isHost;
@@ -790,7 +891,7 @@
     if (["role_reveal", "waiting_ready"].includes(room.state)) renderRoleStage(room);
     if (room.state === "ready_for_exploration") renderExplorationReady(room);
     if (room.state === "exploration") renderExploration(room);
-    if (room.state !== "exploration") window.clearInterval(explorationClockInterval);
+    if (room.state !== "exploration") { window.clearInterval(explorationClockInterval); explorationGame.destroy(); }
     if (room.state === "ready_for_discussion") renderDiscussionStage(room);
     if (["discussion", "discussion_finished"].includes(room.state)) renderLiveDiscussion(room);
     if (room.state === "ready_for_voting") renderVotingReady(room);
@@ -802,6 +903,7 @@
     if (room.state !== "game_finished") delete document.body.dataset.outcome;
     renderGameState(room);
     navigation.goTo(stateScreens[room.state] || "waiting-room");
+    if (room.state === "exploration") window.requestAnimationFrame(() => explorationGame.mount(room));
   }
 
   function clearRoleFace() {
@@ -1035,9 +1137,53 @@
     navigation.goTo("discussion-screen");
   }
 
+  function openReconstructionConfirmation(clueId, slot = null, mode = "place") {
+    const room = multiplayer.currentRoom;
+    if (!room?.reconstruction || room.reconstruction.locked) return;
+    const clue = (multiplayer.privateClues?.cards || []).find((item) => item.id === clueId)
+      || room.reconstruction.slots.find((item) => item.clue?.id === clueId)?.clue;
+    if (!clue) return;
+    pendingReconstructionChange = { clueId, slot, mode, boardVersion: room.reconstruction.version };
+    const stage = room.reconstruction.slots.find((item) => item.id === slot);
+    document.querySelector("#reconstruction-dialog-title").textContent = mode === "remove" ? "Retirar pista" : "Confirmar cambio";
+    document.querySelector("#reconstruction-dialog-description").textContent = mode === "remove"
+      ? `¿Retirar “${clue.title}” de la mesa compartida?`
+      : `¿Colocar “${clue.title}” en la etapa ${stage?.id}: ${stage?.title}?`;
+    document.querySelector("#apply-reconstruction-change").textContent = mode === "remove" ? "Retirar pista" : "Colocar aquí";
+    document.querySelector("#reconstruction-dialog").showModal();
+  }
+
+  async function applyReconstructionChange() {
+    if (!pendingReconstructionChange) return;
+    const change = pendingReconstructionChange;
+    const button = document.querySelector("#apply-reconstruction-change");
+    button.disabled = true;
+    try {
+      if (change.mode === "remove") await multiplayer.removeReconstructionClue(change.clueId, change.boardVersion);
+      else {
+        const isPlaced = multiplayer.currentRoom?.reconstruction?.slots.some((slot) => slot.clue?.id === change.clueId);
+        if (isPlaced) await multiplayer.moveReconstructionClue(change.clueId, change.slot, change.boardVersion);
+        else await multiplayer.placeReconstructionClue(change.clueId, change.slot, change.boardVersion);
+      }
+      selectedReconstructionClue = null;
+      document.querySelector("#reconstruction-dialog").close();
+    } catch (error) {
+      showNotice(document.querySelector("#reconstruction-notice"), error.message, "error");
+      document.querySelector("#reconstruction-dialog").close();
+    } finally {
+      pendingReconstructionChange = null;
+      button.disabled = false;
+    }
+  }
+
   document.addEventListener("click", (event) => {
     const navigationButton = event.target.closest("[data-go-to]");
     if (navigationButton) navigation.goTo(navigationButton.dataset.goTo);
+    const tab = event.target.closest("[data-discussion-tab]");
+    if (tab) {
+      document.querySelector(".discussion-layout").dataset.mobileTab = tab.dataset.discussionTab;
+      document.querySelectorAll("[data-discussion-tab]").forEach((item) => item.setAttribute("aria-selected", String(item === tab)));
+    }
   });
 
   document.addEventListener("input", (event) => {
@@ -1061,7 +1207,7 @@
       document.querySelector("#chat-form").requestSubmit();
       return;
     }
-    if (event.key !== "Escape" || document.querySelector("#leave-dialog").open || document.querySelector("#private-clues-dialog").open || document.querySelector("#vote-dialog").open) return;
+    if (event.key !== "Escape" || document.querySelector("#leave-dialog").open || document.querySelector("#private-clues-dialog").open || document.querySelector("#vote-dialog").open || document.querySelector("#reconstruction-dialog").open) return;
     if (["waiting-room", "story-screen", "role-screen", "exploration-ready", "exploration-screen", "exploration-finished", "discussion-ready", "discussion-screen", "voting-ready", "voting-screen", "calculating-result", "game-result"].includes(navigation.currentId)) requestLeaveConfirmation();
     else if (!["loading", "menu"].includes(navigation.currentId)) navigation.goTo("menu");
   });
@@ -1135,33 +1281,19 @@
       showNotice(document.querySelector("#exploration-ready-notice"), error.message, "error");
     }
   });
-  document.querySelector("#village-map").addEventListener("click", async (event) => {
-    const button = event.target.closest(".map-zone");
-    if (!button) return;
-    button.disabled = true;
-    try {
-      await multiplayer.moveDuringExploration(button.dataset.zone);
-      currentExplorationZone = button.dataset.zone;
-      if (multiplayer.currentRoom) renderExploration(multiplayer.currentRoom);
-    } catch (error) {
-      button.disabled = false;
-      showNotice(document.querySelector("#exploration-notice"), error.message, "error");
-    }
-  });
-  document.querySelector("#back-to-map").addEventListener("click", () => {
-    currentExplorationZone = null;
-    if (multiplayer.currentRoom) renderExploration(multiplayer.currentRoom);
-  });
-  document.querySelector("#investigation-object-grid").addEventListener("click", async (event) => {
-    const button = event.target.closest(".investigate-object");
-    if (!button) return;
-    button.disabled = true;
-    button.textContent = "Investigando…";
-    try { await multiplayer.investigateObject(button.dataset.objectId); }
-    catch (error) {
-      showNotice(document.querySelector("#exploration-notice"), error.message, "error");
-      if (multiplayer.currentRoom) renderExploration(multiplayer.currentRoom);
-    }
+  document.querySelector("#exploration-interact").addEventListener("click", () => window.dispatchEvent(new CustomEvent("hidetown:interact")));
+  document.querySelectorAll("#virtual-joystick button").forEach((button) => {
+    const direction = { x: Number(button.dataset.moveX || 0), y: Number(button.dataset.moveY || 0) };
+    const start = (event) => {
+      event.preventDefault();
+      button.setPointerCapture?.(event.pointerId);
+      window.dispatchEvent(new CustomEvent("hidetown:move", { detail: direction }));
+    };
+    const stop = () => window.dispatchEvent(new CustomEvent("hidetown:move", { detail: { x: 0, y: 0 } }));
+    button.addEventListener("pointerdown", start);
+    button.addEventListener("pointerup", stop);
+    button.addEventListener("pointercancel", stop);
+    button.addEventListener("lostpointercapture", stop);
   });
   document.querySelectorAll(".game-reset-button").forEach((button) => button.addEventListener("click", async (event) => {
     event.currentTarget.disabled = true;
@@ -1179,6 +1311,57 @@
       event.currentTarget.disabled = false;
       showNotice(document.querySelector("#discussion-notice"), error.message, "error");
     }
+  });
+  document.querySelector("#reconstruction-tray-list").addEventListener("click", (event) => {
+    const button = event.target.closest(".tray-clue");
+    if (!button) return;
+    selectedReconstructionClue = selectedReconstructionClue === button.dataset.clueId ? null : button.dataset.clueId;
+    if (multiplayer.currentRoom) renderReconstruction(multiplayer.currentRoom);
+  });
+  document.querySelector("#reconstruction-board").addEventListener("click", (event) => {
+    const remove = event.target.closest(".reconstruction-remove");
+    if (remove) return openReconstructionConfirmation(remove.dataset.clueId, null, "remove");
+    const select = event.target.closest(".reconstruction-select-placed");
+    if (select) {
+      selectedReconstructionClue = select.dataset.clueId;
+      if (multiplayer.currentRoom) renderReconstruction(multiplayer.currentRoom);
+      return;
+    }
+    const slot = event.target.closest(".reconstruction-slot.is-target");
+    if (slot && selectedReconstructionClue) openReconstructionConfirmation(selectedReconstructionClue, Number(slot.dataset.slot));
+  });
+  document.querySelector("#reconstruction-board").addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key)) return;
+    const slot = event.target.closest(".reconstruction-slot.is-target");
+    if (!slot || !selectedReconstructionClue) return;
+    event.preventDefault();
+    openReconstructionConfirmation(selectedReconstructionClue, Number(slot.dataset.slot));
+  });
+  document.querySelector("#cancel-reconstruction-change").addEventListener("click", () => {
+    pendingReconstructionChange = null;
+    document.querySelector("#reconstruction-dialog").close();
+  });
+  document.querySelector("#apply-reconstruction-change").addEventListener("click", applyReconstructionChange);
+  document.querySelector("#reconstruction-dialog").addEventListener("close", () => { pendingReconstructionChange = null; });
+  document.querySelector("#confirm-reconstruction").addEventListener("click", async (event) => {
+    const room = multiplayer.currentRoom;
+    if (!room?.reconstruction) return;
+    event.currentTarget.disabled = true;
+    try {
+      await multiplayer.confirmReconstruction(room.reconstruction.version);
+      showToast("Confirmaste esta versión de la reconstrucción.", "success");
+      if (multiplayer.currentRoom) renderReconstruction(multiplayer.currentRoom);
+    } catch (error) {
+      event.currentTarget.disabled = false;
+      showNotice(document.querySelector("#reconstruction-notice"), error.message, "error");
+    }
+  });
+  document.querySelector("#review-locked-board").addEventListener("click", () => {
+    document.querySelector(".discussion-layout").dataset.mobileTab = "board";
+    document.querySelectorAll("[data-discussion-tab]").forEach((item) => item.setAttribute("aria-selected", String(item.dataset.discussionTab === "board")));
+    document.querySelector("#reconstruction-board-title").focus({ preventScroll: true });
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.querySelector("#reconstruction-panel").scrollIntoView({ behavior: reducedMotion ? "auto" : "smooth", block: "start" });
   });
   document.querySelector("#chat-form").addEventListener("submit", submitChatMessage);
   document.querySelector("#new-messages").addEventListener("click", () => {
@@ -1265,7 +1448,6 @@
   });
   multiplayer.on("exploration-waiting", ({ room }) => navigateToRoom(room));
   multiplayer.on("exploration-started", ({ room }) => {
-    currentExplorationZone = null;
     navigateToRoom(room);
   });
   multiplayer.on("exploration-state", () => multiplayer.currentRoom?.state === "exploration" && renderExploration(multiplayer.currentRoom));
@@ -1277,7 +1459,6 @@
     if (multiplayer.currentRoom) renderExploration(multiplayer.currentRoom);
   });
   multiplayer.on("exploration-finished", ({ room }) => {
-    currentExplorationZone = null;
     closeDiscussionClues();
     navigateToRoom(room);
     showToast("La exploración ha terminado.");
@@ -1286,6 +1467,18 @@
   multiplayer.on("ready-for-discussion", navigateToRoom);
   multiplayer.on("discussion-started", ({ room }) => navigateToRoom(room));
   multiplayer.on("discussion-state", ({ room }) => navigateToRoom(room));
+  multiplayer.on("reconstruction-started", ({ room }) => navigateToRoom(room));
+  multiplayer.on("reconstruction-board-updated", ({ room }) => navigateToRoom(room));
+  multiplayer.on("reconstruction-progress", ({ room }) => navigateToRoom(room));
+  multiplayer.on("reconstruction-locked", ({ room }) => navigateToRoom(room));
+  multiplayer.on("reconstruction-result", ({ room }) => {
+    navigateToRoom(room);
+    audio.play("clue");
+  });
+  multiplayer.on("reconstruction-error", (error) => {
+    recordPublicError(error);
+    showNotice(document.querySelector("#reconstruction-notice"), error.message, "error");
+  });
   multiplayer.on("chat-history", () => {
     if (navigation.currentId === "discussion-screen") renderChatHistory();
   });
@@ -1312,7 +1505,7 @@
   multiplayer.on("game-result", ({ room }) => {
     closeVoteConfirmation();
     navigateToRoom(room);
-    audio.play(room.result?.winner === "village" ? "village" : "creature", { cooldown: 0 });
+    audio.play((room.result?.winnerTeam || room.result?.winner) === "village" ? "village" : "creature", { cooldown: 0 });
   });
   multiplayer.on("vote-error", (error) => { recordPublicError(error); showNotice(document.querySelector("#vote-notice"), error.message, "error"); });
   multiplayer.on("chat-error", (error) => { recordPublicError(error); showNotice(document.querySelector("#chat-notice"), error.message, "error"); });
@@ -1320,14 +1513,12 @@
     closeVoteConfirmation();
     closeDiscussionClues();
     resetRolePresentation();
-    currentExplorationZone = null;
     navigateToRoom(room);
   });
   multiplayer.on("game-reset", ({ room, message }) => {
     closeVoteConfirmation();
     closeDiscussionClues();
     resetRolePresentation();
-    currentExplorationZone = null;
     navigateToRoom(room);
     showToast(message || "La partida fue reiniciada.", "success");
   });
@@ -1335,7 +1526,6 @@
     closeVoteConfirmation();
     closeDiscussionClues();
     resetRolePresentation();
-    currentExplorationZone = null;
     navigateToRoom(room);
     showConnectionAlert(message, "error");
   });

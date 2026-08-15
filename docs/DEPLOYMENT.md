@@ -1,10 +1,10 @@
 # Despliegue de la beta en Render
 
+La guía vigente y detallada está en [`DEPLOY_RENDER.md`](DEPLOY_RENDER.md). Este archivo se conserva como referencia histórica; ante cualquier diferencia, utiliza la guía nueva, que refleja el repositorio y Phaser 3.90.0 actuales.
+
 ## Estado de esta entrega
 
-El proyecto está **preparado para publicar, pendiente de despliegue manual**. No se creó un servicio ni una URL pública porque este entorno no tiene una conexión con Render. Tampoco se subió código: el repositorio Git que contiene accidentalmente esta carpeta tiene un remoto de otro proyecto.
-
-No continúes hasta que `git rev-parse --show-toplevel` ejecutado dentro de `HideTown` devuelva la ruta de esta carpeta, no una carpeta superior.
+El proyecto está **preparado para publicar, pendiente de despliegue manual**. No se creó un servicio, URL pública, commit ni push. La revisión actual confirmó que la raíz es `C:/Dev/Web/HideTown` y que `origin` apunta a `Galindo1206/hidetown`.
 
 ## 1. Crear un repositorio dedicado
 

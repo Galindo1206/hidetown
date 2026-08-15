@@ -1,0 +1,1 @@
+(function () { "use strict"; class CaretakerHouseScene extends window.HideTownGame.BaseExplorationScene { constructor() { super("CaretakerHouseScene", "caretaker-house"); } } window.HideTownGame.CaretakerHouseScene = CaretakerHouseScene; })();

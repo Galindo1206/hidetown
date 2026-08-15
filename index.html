@@ -16,6 +16,22 @@
   <script src="js/navigation.js" defer></script>
   <script src="js/multiplayer.js" defer></script>
   <script src="js/audioManager.js" defer></script>
+  <script src="/vendor/phaser.js" defer></script>
+  <script src="js/game/config/locations.js" defer></script>
+  <script src="js/game/config/interactables.js" defer></script>
+  <script src="js/game/entities/LocalPlayer.js" defer></script>
+  <script src="js/game/entities/RemotePlayer.js" defer></script>
+  <script src="js/game/systems/MovementSystem.js" defer></script>
+  <script src="js/game/systems/InteractionSystem.js" defer></script>
+  <script src="js/game/systems/NetworkSystem.js" defer></script>
+  <script src="js/game/systems/ExplorationAudio.js" defer></script>
+  <script src="js/game/scenes/PreloadScene.js" defer></script>
+  <script src="js/game/scenes/BaseExplorationScene.js" defer></script>
+  <script src="js/game/scenes/VillageScene.js" defer></script>
+  <script src="js/game/scenes/ChurchScene.js" defer></script>
+  <script src="js/game/scenes/CaretakerHouseScene.js" defer></script>
+  <script src="js/game/scenes/BellTowerScene.js" defer></script>
+  <script src="js/game/explorationGame.js" defer></script>
   <script src="js/app.js" defer></script>
 </head>
 <body>
@@ -259,8 +275,8 @@
         <div class="ready-symbol" aria-hidden="true">⌖</div>
         <p class="eyebrow">Nueva fase de investigación</p>
         <h2 id="exploration-ready-title">Exploren el pueblo</h2>
-        <p class="ready-message">Tienen un minuto para investigar San Jerónimo. Cada jugador podrá conservar como máximo dos pistas. Recuerden bien dónde las encontraron: alguien intentará cambiar la verdad.</p>
-        <div class="exploration-facts"><p><strong id="exploration-duration">60 segundos</strong><span>Tiempo controlado por el servidor</span></p><p><strong>Máximo 2 pistas</strong><span>Los hallazgos son privados</span></p></div>
+        <p class="ready-message">Recorran San Jerónimo, entren a sus edificios y acérquense a los objetos. Cada jugador podrá conservar como máximo dos pistas.</p>
+        <div class="exploration-facts"><p><strong id="exploration-duration">90 segundos</strong><span>Tiempo controlado por el servidor</span></p><p><strong>Máximo 2 pistas</strong><span>Los hallazgos son privados</span></p></div>
         <ul class="exploration-zone-summary" id="exploration-zone-summary" aria-label="Zonas disponibles"></ul>
         <p class="stage-meta"><strong id="exploration-ready-progress" aria-live="polite">0 de 3 jugadores preparados</strong></p>
         <button class="button button--primary button--full" id="confirm-exploration-ready" type="button">Estoy preparado</button>
@@ -274,21 +290,27 @@
     <section class="screen screen--exploration" id="exploration-screen" data-screen hidden aria-labelledby="exploration-title">
       <div class="exploration-layout">
         <header class="exploration-header">
-          <div><p class="eyebrow">San Jerónimo</p><h2 id="exploration-title">Mapa del pueblo</h2></div>
-          <div class="discussion-timer exploration-timer" id="exploration-timer" role="timer" aria-live="off"><strong id="exploration-timer-value">01:00</strong><span id="exploration-timer-status">Tiempo restante</span></div>
+          <div><p class="eyebrow">San Jerónimo</p><h2 id="exploration-title"><span id="exploration-location-name">Aldea</span></h2></div>
+          <div class="discussion-timer exploration-timer" id="exploration-timer" role="timer" aria-live="off"><strong id="exploration-timer-value">01:30</strong><span id="exploration-timer-status">Tiempo restante</span></div>
         </header>
         <div class="exploration-toolbar">
           <div class="connection-pill" data-connection-state="connecting" aria-live="polite"><span class="connection-pill__dot" aria-hidden="true"></span><span class="connection-pill__text">Conectando</span></div>
           <strong id="exploration-clue-count" aria-live="polite">0/2 pistas</strong>
           <button class="button button--secondary" id="open-exploration-notebook" type="button">Abrir cuaderno</button>
         </div>
-        <div class="village-map" id="village-map" aria-label="Selecciona una zona"></div>
-        <section class="zone-scene" id="zone-scene" hidden aria-labelledby="zone-scene-title">
-          <button class="back-button" id="back-to-map" type="button"><span aria-hidden="true">←</span> Regresar al mapa</button>
-          <div class="zone-scene__heading"><span id="zone-scene-symbol" aria-hidden="true"></span><div><p class="eyebrow">Investigando</p><h3 id="zone-scene-title"></h3></div></div>
-          <p id="zone-presence" class="zone-presence"></p>
-          <div class="investigation-object-grid" id="investigation-object-grid"></div>
-        </section>
+        <div class="exploration-stage" id="exploration-stage">
+          <div class="exploration-loading" id="exploration-loading" role="status">Preparando San Jerónimo…</div>
+          <div class="exploration-canvas" id="exploration-canvas" aria-label="Aldea 2D caminable multijugador"></div>
+          <p class="exploration-prompt" id="exploration-interaction-prompt" aria-live="polite">Acércate a una pista o una puerta</p>
+          <div class="virtual-joystick" id="virtual-joystick" role="group" aria-label="Joystick virtual">
+            <button type="button" data-move-y="-1" aria-label="Caminar arriba">▲</button>
+            <button type="button" data-move-x="-1" aria-label="Caminar a la izquierda">◀</button>
+            <button type="button" data-move-y="1" aria-label="Caminar abajo">▼</button>
+            <button type="button" data-move-x="1" aria-label="Caminar a la derecha">▶</button>
+          </div>
+          <button class="button button--primary exploration-interact" id="exploration-interact" type="button" disabled>Investigar</button>
+        </div>
+        <p class="exploration-controls-hint">WASD o flechas para caminar · E para investigar, entrar o salir</p>
         <div class="notice" id="exploration-notice" role="status" aria-live="polite" hidden></div>
       </div>
     </section>
@@ -343,6 +365,26 @@
           <button class="button button--secondary" id="view-private-clues" type="button">Ver mis pistas</button>
           <button class="button button--primary" id="back-to-decision" type="button" hidden>Volver a la decisión</button>
         </div>
+        <div class="reconstruction-summary" aria-live="polite">
+          <div><p class="eyebrow">Mesa de reconstrucción</p><strong id="reconstruction-progress">0 jugadores confirmaron esta versión</strong></div>
+          <span id="reconstruction-version">Versión 0</span>
+          <button class="button button--primary" id="confirm-reconstruction" type="button">Estoy de acuerdo con este orden</button>
+        </div>
+        <div class="reconstruction-result" id="reconstruction-result" role="status" hidden>
+          <p class="eyebrow">Reconstrucción cerrada</p><h3 id="reconstruction-result-title"></h3><p id="reconstruction-result-message"></p>
+          <p>La votación comenzará automáticamente. La mesa queda disponible para revisión.</p><button class="button button--secondary" id="review-locked-board" type="button">Revisar tablero bloqueado</button>
+        </div>
+        <div class="discussion-tabs" role="tablist" aria-label="Herramientas de conversación">
+          <button type="button" role="tab" aria-selected="true" data-discussion-tab="board">Mesa</button>
+          <button type="button" role="tab" aria-selected="false" data-discussion-tab="chat">Chat</button>
+        </div>
+        <section class="reconstruction-panel" id="reconstruction-panel" aria-labelledby="reconstruction-board-title">
+          <h3 id="reconstruction-board-title" tabindex="-1">Ordenen lo ocurrido</h3>
+          <p class="panel__intro">Selecciona una pista tuya y después una etapa. El servidor conserva una sola pista por etapa.</p>
+          <ol class="reconstruction-board" id="reconstruction-board"></ol>
+          <section class="reconstruction-tray" aria-labelledby="reconstruction-tray-title"><h4 id="reconstruction-tray-title">Mis pistas disponibles</h4><div id="reconstruction-tray-list"></div></section>
+          <div class="notice" id="reconstruction-notice" role="status" aria-live="polite" hidden></div>
+        </section>
         <div class="chat-panel">
           <div class="chat-messages" id="chat-messages" role="log" aria-live="polite" aria-relevant="additions" tabindex="0">
             <p class="chat-empty" id="chat-empty">Todavía no hay mensajes. Pueden conversar aquí o utilizar una llamada externa.</p>
@@ -401,8 +443,10 @@
       <div class="panel panel--wide result-panel">
         <header class="result-hero" id="result-hero"><p class="eyebrow">La noche llega a su fin</p><h2 id="result-title"></h2><p id="result-message"></p></header>
         <div class="result-summary"><p><span>La criatura era</span><strong id="result-creature"></strong></p><p><span>El pueblo señaló a</span><strong id="result-selected"></strong></p><p><span>Abstenciones</span><strong id="result-abstentions"></strong></p></div>
+        <section class="result-section" aria-labelledby="objectives-result-title"><h3 id="objectives-result-title">Los dos objetivos del pueblo</h3><div class="result-objectives"><article id="result-objective-story"><span class="result-objective__icon" aria-hidden="true"></span><div><h4>Reconstruir la historia</h4><strong id="result-reconstruction-score"></strong><p id="result-reconstruction-status"></p></div></article><article id="result-objective-accusation"><span class="result-objective__icon" aria-hidden="true"></span><div><h4>Identificar a la criatura</h4><strong id="result-accusation-player"></strong><p id="result-accusation-status"></p></div></article></div></section>
         <section class="result-section" aria-labelledby="roles-result-title"><h3 id="roles-result-title">Roles revelados</h3><div class="result-role-grid" id="result-role-grid"></div></section>
         <section class="result-section" aria-labelledby="votes-result-title"><h3 id="votes-result-title">Papeletas y conteo final</h3><div class="result-rounds" id="result-rounds"></div></section>
+        <section class="result-section" aria-labelledby="final-board-title"><h3 id="final-board-title">Revelación de la mesa</h3><p class="panel__intro">Ahora pueden revisar qué encajaba, qué estaba distorsionado y dónde correspondía cada pista.</p><ol class="final-reconstruction-board" id="final-reconstruction-board"></ol><h4 class="true-order-title">El orden verdadero</h4><ol class="true-order-list" id="true-order-list"></ol></section>
         <section class="story-conclusion" aria-labelledby="conclusion-title"><p class="eyebrow">La verdad de San Jerónimo</p><h3 id="conclusion-title">Lo que ocurrió aquella noche</h3><p id="story-conclusion"></p></section>
         <div class="result-actions"><button class="button button--primary" id="play-again" type="button" hidden>Volver a jugar</button><p class="stage-waiting" id="play-again-waiting">Esperando a que el anfitrión prepare una nueva partida…</p><button class="button button--danger" id="return-to-menu" type="button">Regresar al menú</button></div>
         <div class="notice" id="result-notice" role="status" aria-live="polite" hidden></div>
@@ -466,6 +510,10 @@
 
   <dialog class="confirm-dialog" id="vote-dialog" aria-labelledby="vote-dialog-title" aria-describedby="vote-dialog-description">
     <div class="confirm-dialog__panel"><p class="eyebrow">Confirmación secreta</p><h2 id="vote-dialog-title">Confirmar voto</h2><p id="vote-dialog-description"></p><div class="dialog-actions"><button class="button button--secondary" id="cancel-vote" type="button">Cancelar</button><button class="button button--primary" id="confirm-vote" type="button">Confirmar voto definitivo</button></div></div>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="reconstruction-dialog" aria-labelledby="reconstruction-dialog-title" aria-describedby="reconstruction-dialog-description">
+    <div class="confirm-dialog__panel"><p class="eyebrow">Mesa compartida</p><h2 id="reconstruction-dialog-title">Confirmar cambio</h2><p id="reconstruction-dialog-description"></p><div class="dialog-actions"><button class="button button--secondary" id="cancel-reconstruction-change" type="button">Cancelar</button><button class="button button--primary" id="apply-reconstruction-change" type="button">Colocar aquí</button></div></div>
   </dialog>
 
   <dialog class="confirm-dialog" id="leave-dialog" aria-labelledby="leave-dialog-title" aria-describedby="leave-dialog-description">

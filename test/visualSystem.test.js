@@ -49,10 +49,12 @@ test("roles, pistas y votos reciben indicadores adicionales al color", async () 
 test("el mapa de exploración conserva controles accesibles y adaptación móvil", async () => {
   const [html, app, components] = await Promise.all([read("index.html"), read("js/app.js"), read("css/components.css")]);
   assert.match(html, /id="exploration-timer" role="timer"/);
-  assert.match(html, /id="village-map" aria-label=/);
+  assert.match(html, /id="exploration-canvas" aria-label=/);
+  assert.match(html, /id="virtual-joystick" role="group"/);
   assert.match(html, /id="open-exploration-notebook"/);
-  assert.match(app, /button\.className = "map-zone"/);
+  assert.match(app, /explorationGame\.mount/);
+  assert.match(app, /hidetown:move/);
   assert.match(app, /announce\(threshold === 5/);
   assert.match(components, /@media \(max-width: 700px\)/);
-  assert.match(components, /\.map-zone, \.map-zone\[data-zone\]/);
+  assert.match(components, /\.virtual-joystick \{ display: grid; \}/);
 });

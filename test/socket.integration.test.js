@@ -133,7 +133,7 @@ test("flujo real de historia, roles, exploración privada, reconexión, reinicio
   const finalRole = await request(third, "role:confirm");
   assert.equal(finalRole.data.state, "ready_for_exploration");
   assert.equal((await waitingExploration).room.state, "ready_for_exploration");
-  assert.equal((await request(host, "exploration:move", { zoneId: "square" })).error.code, "EXPLORATION_CLOSED");
+  assert.equal((await request(host, "exploration:position", { sceneId: "village", x: 800, y: 690, direction: "down", isMoving: false })).error.code, "EXPLORATION_CLOSED");
   const firstReady = await request(host, "exploration:ready");
   assert.equal(firstReady.data.progress.explorationReady, 1);
   assert.equal((await request(host, "exploration:ready")).data.duplicate, true);
@@ -144,10 +144,12 @@ test("flujo real de historia, roles, exploración privada, reconexión, reinicio
   assert.equal(startedExploration.room.state, "exploration");
   assert.ok(startedExploration.room.exploration.endsAt > startedExploration.room.exploration.startedAt);
   assert.equal(startedExploration.room.players.every((player) => player.zoneId === "square"), true);
-  assert.equal((await request(host, "exploration:move", { zoneId: "invented" })).error.code, "INVALID_ZONE");
-  assert.equal((await request(guestDuringRole, "exploration:move", { zoneId: "church" })).ok, true);
-  assert.equal((await request(guestDuringRole, "exploration:investigate", { objectId: "mud-prints" })).error.code, "OBJECT_NOT_IN_ZONE");
-  await request(guestDuringRole, "exploration:move", { zoneId: "square" });
+  assert.equal((await request(host, "exploration:position", { sceneId: "invented", x: 800, y: 690, direction: "down", isMoving: false })).error.code, "INVALID_SCENE");
+  assert.equal((await request(guestDuringRole, "exploration:investigate", { objectId: "ash-remains" })).error.code, "OBJECT_TOO_FAR");
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  for (const client of [host, guestDuringRole, third]) {
+    assert.equal((await request(client, "exploration:position", { sceneId: "village", x: 770, y: 680, direction: "up", isMoving: false })).ok, true);
+  }
 
   const activeClients = [host, guestDuringRole, third];
   const cluePromises = activeClients.map((client) => once(client, "exploration:clue-found"));
@@ -184,6 +186,15 @@ test("flujo real de historia, roles, exploración privada, reconexión, reinicio
   const startedForAll = await Promise.all(discussionStarts);
   assert.equal(new Set(startedForAll.map((payload) => payload.room.discussion.endsAt)).size, 1);
   assert.equal((await request(host, "discussion:start")).data.duplicate, true);
+  const boardUpdates = [once(host, "reconstruction:board-updated"), once(guestDuringClues, "reconstruction:board-updated"), once(third, "reconstruction:board-updated")];
+  const placed = await request(host, "reconstruction:place", { clueId: "exploration:mud-prints", slot: 1, boardVersion: 0 });
+  assert.equal(placed.ok, true);
+  const sharedBoard = await Promise.all(boardUpdates);
+  assert.equal(sharedBoard.every((payload) => payload.reconstruction.version === 1), true);
+  assert.equal(sharedBoard[0].reconstruction.slots[0].clue.ownerName, "Inti");
+  assert.doesNotMatch(JSON.stringify(sharedBoard), /isAuthentic|canonicalStep|suggestedStep/);
+  assert.equal((await request(guestDuringClues, "reconstruction:remove", { clueId: "exploration:mud-prints", boardVersion: 1 })).error.code, "NOT_CLUE_OWNER");
+  assert.equal((await request(host, "reconstruction:place", { clueId: "exploration:mud-prints", slot: 2, boardVersion: 0 })).error.code, "STALE_BOARD_VERSION");
 
   const unexpectedPayload = await request(host, "chat:send", { text: "mensaje", senderName: "Intruso", roomCode: "OTRA" });
   assert.equal(unexpectedPayload.error.code, "INVALID_PAYLOAD");
@@ -208,12 +219,19 @@ test("flujo real de historia, roles, exploración privada, reconexión, reinicio
   assert.equal(restoredDiscussion.data.room.state, "discussion");
   const recoveredState = await restoredDiscussionState;
   assert.equal(recoveredState.room.discussion.endsAt, discussionStart.data.room.discussion.endsAt);
+  assert.equal(recoveredState.room.reconstruction.slots[0].clue.ownerName, "Inti");
   assert.deepEqual(await restoredDiscussionClues, guestOriginalClues);
   assert.equal((await restoredHistory).messages[0].id, sent.data.id);
 
   const finishedEvent = once(host, "discussion:finished", 2_000);
+  const reconstructionLocked = once(host, "reconstruction:locked", 2_000);
+  const reconstructionResult = once(host, "reconstruction:result", 2_000);
   const finished = await finishedEvent;
   assert.equal(finished.room.state, "discussion_finished");
+  assert.equal((await reconstructionLocked).reconstruction.locked, true);
+  const reconstructionOutcome = await reconstructionResult;
+  assert.equal(reconstructionOutcome.result.score >= 0 && reconstructionOutcome.result.score <= 5, true);
+  assert.equal(Object.hasOwn(reconstructionOutcome.result, "correctSlots"), false);
   assert.equal((await request(host, "chat:send", { text: "fuera de tiempo" })).error.code, "CHAT_CLOSED");
   const votingEvent = await once(host, "game:ready-for-voting", 2_000);
   assert.equal(votingEvent.room.state, "ready_for_voting");
@@ -236,7 +254,10 @@ test("flujo real de historia, roles, exploración privada, reconexión, reinicio
   }
   const gameResult = await resultPromise;
   assert.equal(gameResult.room.state, "game_finished");
-  assert.equal(gameResult.result.winner, "village");
+  assert.equal(gameResult.result.winner, "creature");
+  assert.equal(gameResult.result.outcomeCode, "CREATURE_SABOTAGED_STORY");
+  assert.equal(gameResult.result.accusation.creatureIdentified, true);
+  assert.equal(gameResult.result.reconstruction.passed, false);
   assert.equal(gameResult.result.players.length, 3);
   assert.equal(gameResult.result.rounds[0].ballots.length, 3);
   assert.doesNotMatch(JSON.stringify(gameResult.result), /socket-|reconnectToken|objective/);
@@ -249,7 +270,7 @@ test("flujo real de historia, roles, exploración privada, reconexión, reinicio
   assert.deepEqual((await recoveredResultPromise).result, gameResult.result);
 
   const publicJson = JSON.stringify(publicPayloads);
-  assert.doesNotMatch(publicJson, /roleAssignments|clueAssignments|reconnectToken|socketId|Permanece oculta entre|El polvo acumulado|segunda línea tenue|No existen huellas que regresen/);
+  assert.doesNotMatch(publicJson, /roleAssignments|clueAssignments|reconnectToken|socketId|Permanece oculta entre|isAuthentic|suggestedStep|correctSlots|incorrectSlots|usedClues/);
   assert.equal((await request(guestAfterResult, "game:play-again")).error.code, "NOT_HOST");
   const resetEvent = once(third, "game:reset");
   const reset = await request(host, "game:play-again");

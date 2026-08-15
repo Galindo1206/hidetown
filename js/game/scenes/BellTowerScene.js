@@ -1,0 +1,1 @@
+(function () { "use strict"; class BellTowerScene extends window.HideTownGame.BaseExplorationScene { constructor() { super("BellTowerScene", "bell-tower"); } } window.HideTownGame.BellTowerScene = BellTowerScene; })();

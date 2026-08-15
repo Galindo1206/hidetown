@@ -24,12 +24,11 @@ export function createGameServer({ config = environment, logger = createLogger({
   };
   if (config.allowedOrigins?.length) socketOptions.cors = { origin: config.allowedOrigins, methods: ["GET", "POST"] };
   socketOptions.allowRequest = (request, callback) => {
-    if (config.nodeEnv !== "production") return callback(null, true);
     const origin = request.headers.origin;
     if (!origin) return callback(null, true);
     let sameOrigin = false;
     try { sameOrigin = new URL(origin).host === request.headers.host; }
-    catch { return callback("Origen no válido", false); }
+    catch { return callback(null, false); }
     const accepted = sameOrigin || config.allowedOrigins?.includes(origin);
     if (!accepted) logger.warn?.("socket_origin_rejected", { hasOrigin: true });
     return callback(null, accepted);
@@ -41,11 +40,12 @@ export function createGameServer({ config = environment, logger = createLogger({
   const roomService = new RoomService({
     reconnectGraceMs,
     roomInactivityMs: (config.roomInactivityMinutes ?? 60) * 60_000,
-    explorationDurationMs: (config.explorationDurationSeconds ?? 60) * 1_000,
+    explorationDurationMs: (config.explorationDurationSeconds ?? 90) * 1_000,
     explorationReadyTimeoutMs: config.explorationReadyTimeoutMs ?? 30_000,
     explorationSearchMs: config.explorationSearchMs ?? 3_000,
     explorationFinishedDelayMs: config.explorationFinishedDelayMs ?? 1_200,
     discussionDurationMs: (config.discussionDurationSeconds ?? 240) * 1_000,
+    reconstructionRequiredScore: config.reconstructionRequiredScore ?? 4,
     votingDurationMs: (config.votingDurationSeconds ?? 60) * 1_000,
     tiebreakerDurationMs: (config.tiebreakerDurationSeconds ?? 30) * 1_000,
     discussionFinishedDelayMs: config.discussionFinishedDelayMs ?? 900,
@@ -90,6 +90,7 @@ export function createGameServer({ config = environment, logger = createLogger({
   app.use("/css", express.static(join(projectRoot, "css"), staticOptions));
   app.use("/js", express.static(join(projectRoot, "js"), staticOptions));
   app.use("/assets", express.static(join(projectRoot, "assets"), { ...staticOptions, maxAge: "1d" }));
+  app.get("/vendor/phaser.js", (request, response) => response.sendFile(join(projectRoot, "node_modules", "phaser", "dist", "phaser.min.js")));
   app.get("/", (request, response) => {
     response.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     response.sendFile(join(projectRoot, "index.html"));

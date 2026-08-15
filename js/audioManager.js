@@ -83,6 +83,16 @@
         warning: [[294, 0, .1, "sine"], [294, .18, .1, "sine"]],
         vote: [[392, 0, .1, "triangle"], [494, .09, .12, "triangle"], [659, .18, .18, "triangle"]],
         village: [[392, 0, .35, "sine"], [523, .12, .45, "sine"], [659, .24, .6, "sine"]],
+        wind: [[82, 0, .45, "sine"]],
+        interior: [[110, 0, .3, "sine"], [165, .12, .25, "sine"]],
+        step: [[115, 0, .055, "triangle"]],
+        stoneStep: [[145, 0, .04, "triangle"], [105, .035, .045, "sine"]],
+        dirtStep: [[82, 0, .06, "sine"]],
+        door: [[98, 0, .16, "sawtooth"], [73, .1, .22, "triangle"]],
+        creak: [[122, 0, .28, "sawtooth"], [91, .12, .32, "triangle"]],
+        distantBell: [[294, 0, .8, "sine"], [440, .12, .65, "sine"]],
+        distantDog: [[210, 0, .09, "triangle"], [245, .18, .1, "triangle"], [198, .38, .08, "triangle"]],
+        investigate: [[330, 0, .09, "triangle"], [440, .12, .14, "sine"]],
         creature: [[196, 0, .45, "triangle"], [147, .18, .65, "sine"]]
       };
       (patterns[cue] || patterns.clue).forEach(([frequency, delay, duration, type]) => {

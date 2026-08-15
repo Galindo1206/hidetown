@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { io as createClient } from "socket.io-client";
 import { RoomService } from "../server/services/roomService.js";
 import { createGameServer } from "../server/server.js";
+import { createFoundClue } from "../server/game/explorationDefinitions.js";
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -38,6 +39,16 @@ function confirmPrivateStages(service, sockets) {
 async function finishWithVillageVictory(service, setup) {
   service.startDiscussion(setup.sockets[0]);
   service.sendChatMessage(setup.sockets[0], "Revisemos las pistas antes de votar.");
+  const internalRoom = service.rooms.get(setup.roomCode);
+  const clueObjects = ["mud-prints", "western-window", "stopped-clock", "altar"];
+  const playerIds = [...internalRoom.gameParticipants.keys()];
+  clueObjects.forEach((objectId, index) => {
+    const ownerId = playerIds[Math.floor(index / 2) % playerIds.length];
+    const clue = createFoundClue(objectId, "inhabitant");
+    internalRoom.clueAssignments.get(ownerId).cards.push(clue);
+    internalRoom.reconstructionBoard.set(index + 1, { clueId: clue.id, ownerId });
+  });
+  internalRoom.reconstructionVersion = clueObjects.length;
   service.finishDiscussion(setup.roomCode);
   const votingRoom = await waitForState(service, setup.roomCode, "voting");
   const privateStates = setup.sockets.map((socket) => service.getPrivateGameStateBySocket(socket));

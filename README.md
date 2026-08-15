@@ -4,7 +4,7 @@ Videojuego web multijugador de misterio y engaño para grupos de 3 a 6 amigos, a
 
 ## Estado actual
 
-**Fase 10 preparada — beta `0.9.0-beta.1`.** El servidor, cliente, configuración y documentación están listos para un Web Service gratuito de Render. El despliegue público sigue pendiente: este entorno no tiene conexión con Render y la carpeta está dentro de un repositorio Git ajeno, por lo que no se creó una URL ni se subió código.
+**Beta `0.9.0-beta.1` preparada para Render.** Frontend, Phaser, Express, Socket.IO y `/health` se sirven desde un único Web Service. La raíz y el remoto dedicado fueron verificados, pero el despliegue público sigue pendiente: no se creó una URL, servicio, commit ni push.
 
 Las salas y partidas se almacenan temporalmente en memoria. Reiniciar Node elimina todas las salas.
 
@@ -29,6 +29,7 @@ npm start      # ejecución normal
 npm test       # pruebas unitarias e integrales
 npm run test:rc # recorridos críticos del candidato
 npm run test:production # configuración, cabeceras, caché y salud
+npm run smoke:production # rutas públicas/privadas y cierre en producción local
 npm run check  # comprobación de sintaxis
 ```
 
@@ -48,8 +49,9 @@ Puede copiarse `.env.example` como `.env`. El archivo real está ignorado por Gi
 | `LOG_LEVEL` | `debug` en desarrollo; `info` en producción | Nivel de logs estructurados: `error`, `warn`, `info` o `debug`. |
 | `RATE_LIMIT_WINDOW_MS` | `10000` | Ventana del límite de intentos. |
 | `RATE_LIMIT_MAX_ACTIONS` | `8` | Creaciones o ingresos permitidos por ventana. |
-| `EXPLORATION_DURATION_SECONDS` | `60` | Duración de la exploración; acepta entre 30 y 180 segundos. |
+| `EXPLORATION_DURATION_SECONDS` | `90` | Duración de la exploración caminable; acepta entre 30 y 180 segundos. |
 | `DISCUSSION_DURATION_SECONDS` | `240` | Duración de la conversación; acepta entre 30 y 600 segundos. |
+| `RECONSTRUCTION_REQUIRED_SCORE` | `4` | Etapas correctas necesarias para aprobar la reconstrucción; acepta entre 1 y 5. |
 | `VOTING_DURATION_SECONDS` | `60` | Duración de la votación principal; acepta entre 15 y 180 segundos. |
 | `TIEBREAKER_DURATION_SECONDS` | `30` | Duración del desempate; acepta entre 10 y 120 segundos. |
 
@@ -63,6 +65,7 @@ Puede copiarse `.env.example` como `.env`. El archivo real está ignorado por Gi
 │   ├── navigation.js            # Navegación SPA
 │   ├── multiplayer.js           # Cliente Socket.IO y sesión propia
 │   ├── audioManager.js           # Audio local, preferencia y limpieza
+│   ├── game/                     # Phaser: escenas, entidades, sistemas y configuración
 │   └── app.js                   # Renderizado seguro e interacción
 ├── server/
 │   ├── server.js                # Express, HTTP y Socket.IO
@@ -77,7 +80,9 @@ Puede copiarse `.env.example` como `.env`. El archivo real está ignorado por Gi
 └── test/                        # Pruebas unitarias, integrales y visuales estáticas
 ```
 
-Express publica solamente `index.html`, `css`, `js` y `assets`. El backend, las pruebas y los archivos de entorno no son recursos públicos.
+Express publica solamente `index.html`, `css`, `js`, `assets` y la distribución fijada de Phaser en `/vendor/phaser.js`. El backend, las pruebas, `node_modules` en general y los archivos de entorno no son recursos públicos.
+
+La arquitectura es híbrida. Menú, sala, historia, rol, cuaderno, reconstrucción, chat, votación y resultados continúan en HTML/CSS/JavaScript. Solo el estado `exploration` crea una instancia de **Phaser 3.90.0**; al terminar o salir se eliminan escenas, canvas, listeners, timers y sonido de exploración. La instancia reutiliza `MultiplayerClient` y su única conexión Socket.IO.
 
 ## Identidad visual y sistema de componentes
 
@@ -89,7 +94,7 @@ Los roles se distinguen mediante color, símbolo, textura y composición. Las pi
 
 ## Sonido
 
-`js/audioManager.js` es el administrador central. Usa Web Audio API para sintetizar ambiente discreto, campana narrativa, recepción de pista, advertencia de tiempo, confirmación de voto y desenlaces. No solicita archivos de audio inexistentes.
+`js/audioManager.js` es el administrador central. Usa Web Audio API para sintetizar ambiente discreto, viento, interior, pasos, puerta, investigación, campana narrativa, recepción de pista, advertencia de tiempo, confirmación de voto y desenlaces. No solicita archivos de audio inexistentes.
 
 El sonido comienza silenciado en la primera visita y solo se habilita tras una interacción explícita. La preferencia se guarda en `localStorage` con la clave `el-pueblo-oculto:sound-muted`. El contexto se pausa al ocultar la pestaña y se libera al abandonar la página. Los tonos son provisionales y pueden reemplazarse más adelante por grabaciones locales con licencia compatible.
 
@@ -117,7 +122,7 @@ Documentación de la campaña:
 - [`docs/MANUAL_TEST_CHECKLIST.md`](docs/MANUAL_TEST_CHECKLIST.md): recorrido humano sin marcar como ejecutado.
 - [`docs/FRIENDS_PLAYTEST_GUIDE.md`](docs/FRIENDS_PLAYTEST_GUIDE.md): sesión en una red local con 4–6 amigos.
 - [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md): limitaciones abiertas del candidato.
-- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md): publicación manual segura en Render.
+- [`docs/DEPLOY_RENDER.md`](docs/DEPLOY_RENDER.md): configuración exacta y publicación manual segura en Render.
 - [`docs/PRODUCTION_CHECKLIST.md`](docs/PRODUCTION_CHECKLIST.md): verificación local y pública.
 - [`docs/PUBLIC_PLAYTEST.md`](docs/PUBLIC_PLAYTEST.md): invitación y reporte seguro para probadores.
 - [`docs/ROLLBACK.md`](docs/ROLLBACK.md): reversión, suspensión y consecuencias.
@@ -147,6 +152,7 @@ Copia `.env.example` como `.env` y usa los mínimos admitidos. Esto no modifica 
 
 ```dotenv
 DISCUSSION_DURATION_SECONDS=30
+RECONSTRUCTION_REQUIRED_SCORE=4
 VOTING_DURATION_SECONDS=15
 TIEBREAKER_DURATION_SECONDS=10
 ```
@@ -191,7 +197,7 @@ ready_for_voting → voting → vote_tiebreaker → calculating_result → game_
 - `role_reveal`: entrega individualmente los roles cuando todos confirmaron la historia.
 - `waiting_ready`: espera las confirmaciones de rol restantes.
 - `ready_for_exploration`: presenta las reglas, cinco zonas y espera confirmaciones; un timeout del servidor evita el bloqueo.
-- `exploration`: mapa sincronizado con un único reloj de 60 segundos y búsquedas privadas.
+- `exploration`: aldea 2D caminable sincronizada con un único reloj predeterminado de 90 segundos y búsquedas privadas.
 - `exploration_finished`: cancela búsquedas pendientes y presenta el cierre antes de conversar.
 - `ready_for_discussion`: todos están listos y el anfitrión puede iniciar.
 - `discussion`: chat abierto y reloj del servidor en curso.
@@ -226,13 +232,23 @@ La historia vive en `server/stories/sanJeronimo.js` y contiene también su concl
 
 La distribución utiliza Fisher–Yates con `crypto.randomInt`. Se ejecuta una sola vez al comenzar y se asocia al UUID estable de cada jugador.
 
-## Fase 4: exploración de San Jerónimo
+## Fase 4B: exploración caminable de San Jerónimo
 
-Después de confirmar los roles, todos preparan y comienzan simultáneamente una exploración controlada por el servidor. El mapa contiene **Iglesia**, **Campanario**, **Plaza**, **Casa del cuidador** y **Calle occidental**, con tres objetos estables por zona. El navegador solo envía `zoneId` u `objectId`; el servidor valida ubicación, estado, tiempo, duplicados y el máximo de dos pistas.
+Después de confirmar los roles, todos comienzan simultáneamente en la plaza. El exterior mide 1600×1152 (25×18 tiles lógicos de 64 px) e incluye plaza, calle occidental, iglesia, campanario, casa del cuidador, fuente, caminos, viviendas, vegetación, faroles y niebla. Iglesia, casa y campanario tienen interiores de una pantalla. La ventana occidental comparte su ID desde ambos lados; no crea una pista duplicada.
+
+Controles: **WASD** o flechas para caminar, **E** para investigar/entrar/salir. En pantallas táctiles aparecen joystick direccional y botón contextual. El movimiento se limita a cuatro direcciones y se detiene al perder foco, desconectarse, investigar o terminar el reloj. La cámara sigue al jugador, respeta límites y adapta el zoom sin recrear Phaser.
+
+El cliente envía posición/dirección/movimiento a 12,5 Hz como máximo y solamente si cambian. Los jugadores remotos se interpolan y solo se dibujan cuando comparten escena. El aspecto publica identidad, nombre, conexión e investigación, pero nunca rol, pistas, voto o autenticidad. El servidor valida frecuencia, escena, coordenadas, colisiones básicas, velocidad, puertas y distancia de interacción; rechaza teletransportes y entradas inexistentes.
 
 Cada búsqueda dura aproximadamente tres segundos. Habitante e investigador reciben la versión verdadera del objeto; la criatura recibe únicamente una versión distorsionada y plausible. El investigador puede añadir una sola observación analítica a una pista encontrada. Ubicaciones y presencia son públicas, pero objetos investigados, textos, análisis y cuaderno permanecen privados.
 
 El cuaderno conserva zona, objeto, título, texto y análisis. Se puede abrir sin pausar el reloj y sigue alimentando **Ver mis pistas** durante conversación y votación. Al terminar `endsAt`, el servidor cancela búsquedas incompletas, conserva las completadas y entra a `ready_for_discussion`; el chat no conoce el mapa. El reparto automático anterior (`public_evidence` → `private_clues`) ya no forma parte de la máquina de estados ni tiene eventos activos.
+
+La reconexión restaura escena, coordenadas autoritativas, dirección, tiempo, objetos, pistas, análisis y búsqueda pendiente. Si la fase ya terminó no se vuelve a crear el canvas. Volver a jugar parte del punto inicial y construye una instancia limpia.
+
+### Arte y audio provisionales
+
+El prototipo usa formas vectoriales generadas por el propio proyecto: personaje base, adobe, madera, piedra, caminos, vegetación, faroles, niebla y mobiliario. Los sonidos son síntesis Web Audio original, sin archivos ni licencias externas. Recursos pendientes de producción: tiles pintados de exterior; sprites definitivos con cuatro caminatas e investigación; fondos de los tres interiores; ilustraciones individuales de objetos; transiciones/efectos atmosféricos finales; grabaciones licenciadas de viento, pasos por superficie, puertas, madera, perros y campanas.
 
 ## Protección de información privada
 
@@ -289,17 +305,23 @@ La interfaz utiliza regiones `aria-live` para conexión perdida, reconexión, re
 - `SIGINT` y `SIGTERM` realizan un cierre ordenado. Errores no controlados se registran con contexto limitado y provocan el cierre, en vez de mantener un estado desconocido.
 - Las salas siguen almacenadas solo en memoria: reiniciar Node elimina todas las partidas y las sesiones del navegador pasarán a expiradas.
 
-## Conversación y chat
+## Fase 5: mesa de reconstrucción y chat
 
 - El anfitrión inicia una sola vez cuando la exploración terminó y todos están conectados.
 - El servidor guarda `startedAt` y `endsAt` y mantiene un único temporizador por sala. El navegador solo representa el tiempo restante y muestra avisos a 60, 30 y 10 segundos.
 - El tiempo predeterminado es 240 segundos. Una recarga, otra pestaña o una reconexión no lo reinician.
+- La conversación contiene una mesa pública con cinco etapas ordenadas: Llegada, Entrada, Campanas, Advertencia y Suplantación. Cada etapa admite una sola pista y el chat permanece disponible en paralelo.
+- Cada hallazgo conserva en servidor `canonicalStep` e `isAuthentic`. Las pistas distorsionadas de la criatura nunca puntúan y esos campos no forman parte de ningún DTO público o privado del cliente.
+- Solo el propietario puede colocar, mover o retirar su pista; ser anfitrión no concede privilegios. Cada operación exige la versión vigente, incrementa `boardVersion` e invalida todas las confirmaciones anteriores.
+- Los jugadores seleccionan una pista y una etapa y confirman el cambio en un diálogo accesible. En móvil pueden alternar entre Mesa y Chat sin perder el reloj ni el estado compartido.
+- Todos los conectados deben confirmar la misma versión. La unanimidad o el vencimiento bloquean la mesa una sola vez; el servidor calcula de 0 a 5 aciertos y considera superada la reconstrucción con al menos 4.
+- Antes de votar solo se publica puntuación, estado superado/no superado y mensaje general. Las etapas correctas, incorrectas, autenticidad, pasos canónicos y pistas usadas quedan como resultado interno para integración futura.
 - Cada cliente envía solamente `{ text }`. El servidor deriva UUID público, nombre, sala y hora desde la sesión autenticada.
 - Se aceptan hasta 300 caracteres, se rechazan vacíos y se exige un intervalo de 750 ms; además se permiten como máximo ocho mensajes aceptados por jugador en diez segundos.
 - El historial permanece en memoria y conserva solamente los últimos 100 mensajes. No se reenvía completo con cada mensaje.
 - HTML, enlaces y scripts se conservan como texto plano y se insertan mediante `textContent`.
 - El modal de consulta se construye solo al abrirse, muestra evidencia pública y las pistas del socket actual, y elimina el contenido privado del DOM al cerrarse.
-- Al vencer el tiempo, el servidor cierra una sola vez, rechaza nuevos mensajes y conduce automáticamente a la votación.
+- Al bloquearse la mesa, el servidor rechaza nuevos cambios y mensajes, muestra la puntuación con la mesa congelada y conduce automáticamente a `ready_for_voting` sin cambiar el conteo ni el resultado de la Fase 6.
 
 ## Votación, desempate y resultado
 
@@ -307,8 +329,15 @@ La interfaz utiliza regiones `aria-live` para conexión perdida, reconexión, re
 - La selección no cuenta hasta confirmarse en un diálogo accesible. Después es definitiva. La ronda termina cuando votan todos o vence `endsAt`; los faltantes se registran como abstenciones.
 - `server/game/countVotes.js` es una función pura que valida las papeletas y devuelve votos válidos, abstenciones, total por candidato, máximos, empate y candidato seleccionado.
 - Un empate abre una sola ronda de 30 segundos y limita la lista a los empatados. Si persiste, la criatura gana porque el pueblo no llegó a una decisión única.
-- El pueblo gana solo si el candidato único con más votos es la criatura. Una acusación a un inocente o un empate persistente da la victoria a la criatura.
+- El pueblo dispone de dos objetivos: aprobar la reconstrucción y señalar correctamente a la criatura. Solo gana cuando completa ambos; si falla cualquiera, gana la criatura.
+- `RECONSTRUCTION_REQUIRED_SCORE` fija el requisito en servidor y vale 4/5 de forma predeterminada. La puntuación y el requisito quedan congelados al bloquear la mesa y se vuelven a validar antes de votar y de calcular el resultado.
+- El cálculo puro produce los códigos `VILLAGE_COMPLETED_BOTH_OBJECTIVES`, `CREATURE_SABOTAGED_STORY`, `CREATURE_EVADED_VOTE`, `CREATURE_TOTAL_DECEPTION` y `CREATURE_WON_BY_PERSISTENT_TIE`; los textos visuales no deciden el ganador.
+- Un empate persistente, una acusación a un inocente o la ausencia de sospechoso único hacen que falle el objetivo de acusación. Las abstenciones continúan contándose con las reglas existentes y no alteran la puntuación de reconstrucción.
+- En `game_finished` se revelan las posiciones correctas e incorrectas, autenticidad, ubicación canónica y propietario de las pistas colocadas, junto con el orden verdadero. Nada de esa información aparece durante la votación.
 - En `game_finished` se revelan criatura, jugador seleccionado, todos los roles, votos recibidos, abstenciones y papeletas por ronda sin tokens, Socket IDs ni identificadores internos.
+- `winner` se conserva como alias compatible de `winnerTeam` en `game:result`; `outcomeCode` es la fuente estable del motivo.
+
+El umbral 4/5 queda pendiente de validación con jugadores reales. Si el pueblo pierde con demasiada frecuencia se considerará 3/5; si la criatura pierde demasiado, se mantendrá 4/5 o se revisará la cobertura de pistas. No se harán cambios de balance sin datos.
 
 ## Volver a jugar
 
@@ -331,14 +360,15 @@ La siguiente partida realiza un nuevo barajado.
 Cliente → servidor:
 
 - Salas: `room:create`, `room:join`, `room:restore`, `room:leave`.
-- Juego: `game:start`, `story:confirm`, `role:confirm`, `exploration:ready`, `exploration:move`, `exploration:investigate`, `exploration:analyze`, `discussion:start`, `chat:send`, `vote:submit`, `game:play-again`, `game:return-to-menu`, `game:reset`.
+- Juego: `game:start`, `story:confirm`, `role:confirm`, `exploration:ready`, `exploration:position`, `exploration:transition`, `exploration:investigate`, `exploration:analyze`, `discussion:start`, `chat:send`, `reconstruction:place`, `reconstruction:move`, `reconstruction:remove`, `reconstruction:confirm`, `vote:submit`, `game:play-again`, `game:return-to-menu`, `game:reset`.
 
 Servidor → cliente:
 
 - Sala: `room:joined`, `room:updated`, `room:left`, `room:error`.
-- Exploración pública: `exploration:waiting`, `exploration:started`, `exploration:location-updated`, `exploration:finished`; nunca contienen hallazgos.
+- Exploración pública: `exploration:waiting`, `exploration:started`, `exploration:player-state`, `exploration:scene-changed`, `exploration:finished`; nunca contienen hallazgos.
 - Exploración privada: `exploration:state`, `exploration:search-started`, `exploration:clue-found`, `exploration:error`.
-- Juego público: `game:started`, `story:presented`, los eventos de progreso, `game:ready-for-discussion`, `discussion:started`, `discussion:state`, `discussion:finished`, `chat:message`, `chat:history`, `chat:error`, `game:ready-for-voting`, `voting:started`, `voting:progress`, `voting:closed`, `voting:tiebreaker`, `game:result`, `game:reset`, `game:cancelled`, `vote:error`, `game:error`.
+- Juego público: `game:started`, `story:presented`, los eventos de progreso, `game:ready-for-discussion`, `discussion:started`, `discussion:state`, `discussion:finished`, `chat:message`, `chat:history`, `chat:error`, `reconstruction:started`, `reconstruction:board-updated`, `reconstruction:progress`, `reconstruction:locked`, `reconstruction:result`, `reconstruction:error`, `game:ready-for-voting`, `voting:started`, `voting:progress`, `voting:closed`, `voting:tiebreaker`, `game:result`, `game:reset`, `game:cancelled`, `vote:error`, `game:error`.
+- `game:result` conserva `winner` por compatibilidad y añade `winnerTeam`, `outcomeCode`, el resumen/revelación `reconstruction` y el objetivo `accusation`. La reconexión posterior recibe exactamente el resultado almacenado, sin recalcularlo.
 - Estado individual: `game:state`, `role:assigned` y `clues:assigned`. Roles y cuadernos siempre se envían a una única conexión.
 - Presencia: `player:disconnected`, `player:reconnected`, `player:removed`, `host:changed`.
 
@@ -352,8 +382,8 @@ Servidor → cliente:
 4. Inicia como anfitrión y confirma la historia en cada pestaña.
 5. Revela cada carta manteniendo las otras pantallas fuera de vista.
 6. Confirma los roles y pulsa **Estoy preparado** en las tres pestañas.
-7. Recorre las cinco zonas, observa las ubicaciones públicas e investiga hasta dos objetos por jugador. Comprueba que la criatura recibe una versión distorsionada y que el investigador puede analizar una sola pista.
-8. Abre el cuaderno, recarga una pestaña durante el minuto y comprueba que recupera tiempo, zona, objetos y hallazgos.
+7. Recorre la plaza y calle, entra y sal de los tres interiores y observa que solo se ven jugadores de la misma escena. Investiga hasta dos objetos por jugador y comprueba las reglas de rol.
+8. Abre el cuaderno, recarga una pestaña durante la exploración y comprueba que recupera tiempo, escena, posición, objetos y hallazgos sin duplicar canvas.
 9. Espera el cierre, inicia la conversación como anfitrión y verifica **Ver mis pistas** y el chat desde cada pestaña.
 10. Espera el cierre automático, elige un sospechoso en cada pestaña y confirma cada voto.
 11. Comprueba que antes del cierre solo cambia el contador de participación, no los totales por candidato.
@@ -372,7 +402,8 @@ La suite cubre:
 
 - Inicio con 3, 4, 5 y 6 jugadores.
 - Distribución exacta y variación del barajado.
-- Cinco zonas, quince objetos y validación de movimiento/objeto en el servidor.
+- Exterior de 25×18 tiles, tres interiores, quince IDs de objeto y mundo público sin secretos.
+- Frecuencia, límites, obstáculos, velocidad, teletransportes, escenas, puertas y distancia autoritativa.
 - Máximo de dos pistas, versiones por rol y análisis único del investigador.
 - Temporizador único, cancelación de búsqueda, reconexión y limpieza de exploración.
 - Permisos, estados y pulsaciones repetidas.

@@ -57,6 +57,32 @@ const resourceSummary = await evaluate(`(() => {
     externalResources: resources.filter((item) => new URL(item.name).origin !== location.origin).map((item) => item.name)
   };
 })()`);
+const phaserLifecycle = await evaluate(`(async () => {
+  document.querySelectorAll('[data-screen]').forEach((screen) => { screen.hidden = screen.id !== 'exploration-screen'; });
+  const listeners = new EventTarget();
+  const multiplayer = {
+    session: { playerId: 'audit-player' }, privateExploration: { sceneId: 'village', x: 400, y: 400, direction: 'down', isMoving: false, investigatedObjectIds: [], clueCount: 0 },
+    currentRoom: { state: 'exploration', players: [{ id: 'audit-player', name: 'Auditoría', connected: true, explorationState: { sceneId: 'village', x: 400, y: 400, direction: 'down', isMoving: false } }], exploration: { zones: [], world: { playerSpeed: 220, interactionDistance: 92, scenes: [{ id: 'village', name: 'San Jerónimo', width: 1600, height: 1152, spawn: { x: 400, y: 400, direction: 'down' }, objects: [], transitions: [], obstacles: [] }] } } },
+    on(name, listener) { const wrapped = (event) => listener(event.detail); listeners.addEventListener(name, wrapped); return () => listeners.removeEventListener(name, wrapped); },
+    sendExplorationPosition(position) { this.privateExploration = { ...this.privateExploration, ...position }; return Promise.resolve({ position }); },
+    investigateObject() { return Promise.resolve({}); }, transitionExplorationScene() { return Promise.reject(new Error('Sin puerta')); }
+  };
+  const audio = new AudioManager();
+  const game = new ExplorationGame({ multiplayer, audio, onError() {} });
+  const mounted = game.mount(multiplayer.currentRoom);
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  const first = document.querySelectorAll('#exploration-canvas canvas').length;
+  game.mount(multiplayer.currentRoom);
+  const second = document.querySelectorAll('#exploration-canvas canvas').length;
+  game.destroy();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  const afterDestroy = document.querySelectorAll('#exploration-canvas canvas').length;
+  game.mount(multiplayer.currentRoom);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const afterRemount = document.querySelectorAll('#exploration-canvas canvas').length;
+  game.destroy(); audio.destroy();
+  return { mounted, first, second, afterDestroy, afterRemount, valid: mounted && first === 1 && second === 1 && afterDestroy === 0 && afterRemount === 1 };
+})()`);
 const sizes = [[320, 568], [360, 640], [375, 667], [390, 844], [412, 915], [768, 1024], [1024, 768], [1366, 768], [1920, 1080]];
 const screenIds = await evaluate("[...document.querySelectorAll('[data-screen]')].map((screen) => screen.id)");
 const dialogIds = await evaluate("[...document.querySelectorAll('dialog')].map((dialog) => dialog.id)");
@@ -135,6 +161,6 @@ const metric = (name) => performanceMetrics.metrics.find((item) => item.name ===
 const runtime = { jsHeapUsedBytes: Math.round(metric("JSHeapUsedSize")), domNodes: Math.round(metric("Nodes")), documents: Math.round(metric("Documents")) };
 
 const failures = results.filter((item) => item.documentWidth > item.viewport[0] || item.tooWide.length > 0 || !item.canScrollToControls);
-console.log(JSON.stringify({ resolutions: sizes.map((size) => size.join("x")), screens: screenIds.length, checks: results.length, failures, reducedMotion, keyboardFocus, dialogEscape, textZoom, accessibility, audioStartsLocked, audioToggle, resourceSummary, runtime, failedRequests, browserErrors }, null, 2));
+console.log(JSON.stringify({ resolutions: sizes.map((size) => size.join("x")), screens: screenIds.length, checks: results.length, failures, reducedMotion, keyboardFocus, dialogEscape, textZoom, accessibility, audioStartsLocked, audioToggle, phaserLifecycle, resourceSummary, runtime, failedRequests, browserErrors }, null, 2));
 socket.close();
-if (failures.length || !reducedMotion || !keyboardFocus || !dialogEscape || !textZoom || accessibility.unlabeled.length || !audioStartsLocked || !audioToggle || resourceSummary.externalResources.length || failedRequests.length || browserErrors.length) process.exitCode = 1;
+if (failures.length || !reducedMotion || !keyboardFocus || !dialogEscape || !textZoom || accessibility.unlabeled.length || !audioStartsLocked || !audioToggle || !phaserLifecycle.valid || resourceSummary.externalResources.length || failedRequests.length || browserErrors.length) process.exitCode = 1;

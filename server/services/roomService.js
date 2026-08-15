@@ -9,12 +9,21 @@ import {
   explorationInstructions,
   getAnalysisForObject,
   getExplorationObject,
-  getExplorationZone,
   toPublicExplorationMap
 } from "../game/explorationDefinitions.js";
+import {
+  canInteract,
+  createExplorationPosition,
+  resolveTransition,
+  toPublicExplorationWorld,
+  validateMovement,
+  zoneForPosition
+} from "../game/explorationWorld.js";
 import { validateChatMessage } from "../chat/messageValidator.js";
 import { countVotes } from "../game/countVotes.js";
 import { getStory, toPublicStory } from "../stories/index.js";
+import { evaluateReconstruction, reconstructionSteps, reconstructionTruth } from "../game/reconstructionDefinitions.js";
+import { calculateFinalOutcome, OUTCOME_DETAILS } from "../game/calculateFinalOutcome.js";
 import {
   normalizeNameForComparison,
   validateName,
@@ -42,11 +51,12 @@ export class RoomService {
     codeGenerator = generateRoomCode,
     roleAssigner = assignRoles,
     storyProvider = getStory,
-    explorationDurationMs = 60_000,
+    explorationDurationMs = 90_000,
     explorationReadyTimeoutMs = 30_000,
     explorationSearchMs = 3_000,
     explorationFinishedDelayMs = 1_200,
     discussionDurationMs = 240_000,
+    reconstructionRequiredScore = 4,
     discussionFinishedDelayMs = 900,
     chatCooldownMs = 750,
     chatBurstWindowMs = 10_000,
@@ -71,6 +81,10 @@ export class RoomService {
     this.explorationSearchMs = explorationSearchMs;
     this.explorationFinishedDelayMs = explorationFinishedDelayMs;
     this.discussionDurationMs = discussionDurationMs;
+    if (!Number.isInteger(reconstructionRequiredScore) || reconstructionRequiredScore < 1 || reconstructionRequiredScore > 5) {
+      throw new TypeError("reconstructionRequiredScore debe estar entre 1 y 5.");
+    }
+    this.reconstructionRequiredScore = reconstructionRequiredScore;
     this.discussionFinishedDelayMs = discussionFinishedDelayMs;
     this.chatCooldownMs = chatCooldownMs;
     this.chatBurstWindowMs = chatBurstWindowMs;
@@ -116,6 +130,14 @@ export class RoomService {
       discussionEndsAt: null,
       discussionTimer: null,
       discussionTransitionTimer: null,
+      reconstructionBoard: new Map(),
+      reconstructionVersion: 0,
+      reconstructionConfirmations: new Map(),
+      reconstructionLocked: false,
+      reconstructionResult: null,
+      reconstructionScore: null,
+      reconstructionRequiredScore: null,
+      reconstructionPassed: null,
       chatMessages: [],
       chatRate: new Map(),
       gameParticipants: new Map(),
@@ -130,7 +152,9 @@ export class RoomService {
       votes: new Map(),
       voteRequestAt: new Map(),
       voteRoundHistory: [],
-      finalResult: null
+      finalResult: null,
+      creatureIdentified: null,
+      outcomeCode: null
     };
     this.rooms.set(code, room);
     this.socketIndex.set(socketId, { roomCode: code, playerId: player.id });
@@ -282,14 +306,27 @@ export class RoomService {
     return { room: publicRoom, duplicate: false, started };
   }
 
-  moveDuringExploration(socketId, zoneId) {
+  updateExplorationPosition(socketId, nextPosition) {
     const { room, player } = this.getContextBySocket(socketId);
     this.assertExplorationActive(room);
-    if (typeof zoneId !== "string" || !getExplorationZone(zoneId)) throw new AppError("INVALID_ZONE");
     const state = room.explorationPlayers.get(player.id);
     if (state.activeSearch) throw new AppError("SEARCH_IN_PROGRESS");
-    state.location = zoneId;
-    return { room: this.toPublicRoom(room), playerId: player.id, zoneId };
+    const now = this.nowProvider();
+    const validation = validateMovement(state, nextPosition, now - state.lastMovementAt);
+    if (!validation.valid) throw new AppError(validation.code);
+    Object.assign(state, validation.position, { location: zoneForPosition(validation.position), lastMovementAt: now });
+    return { roomCode: room.code, playerId: player.id, position: this.toPublicPlayerPosition(state) };
+  }
+
+  transitionExplorationScene(socketId, targetSceneId) {
+    const { room, player } = this.getContextBySocket(socketId);
+    this.assertExplorationActive(room);
+    const state = room.explorationPlayers.get(player.id);
+    if (state.activeSearch) throw new AppError("SEARCH_IN_PROGRESS");
+    const position = resolveTransition(state, targetSceneId);
+    if (!position) throw new AppError("INVALID_TRANSITION");
+    Object.assign(state, position, { location: zoneForPosition(position), lastMovementAt: this.nowProvider() });
+    return { room: this.toPublicRoom(room), playerId: player.id, position: this.toPublicPlayerPosition(state) };
   }
 
   investigateDuringExploration(socketId, objectId, onResolved) {
@@ -300,7 +337,7 @@ export class RoomService {
     const state = room.explorationPlayers.get(player.id);
     const assignment = room.clueAssignments.get(player.id);
     if (!state || !assignment) throw new AppError("INVALID_STATE");
-    if (state.location !== item.zoneId) throw new AppError("OBJECT_NOT_IN_ZONE");
+    if (!canInteract(state, item.id)) throw new AppError("OBJECT_TOO_FAR");
     if (state.activeSearch) throw new AppError("SEARCH_IN_PROGRESS");
     if (state.investigatedObjectIds.has(item.id)) throw new AppError("OBJECT_ALREADY_INVESTIGATED");
     if (assignment.cards.length >= 2) throw new AppError("CLUE_LIMIT_REACHED");
@@ -309,6 +346,7 @@ export class RoomService {
     const completesAt = Math.min(this.nowProvider() + this.explorationSearchMs, room.explorationEndsAt);
     state.investigatedObjectIds.add(item.id);
     state.activeSearch = { id: searchId, objectId: item.id, completesAt, timer: null };
+    state.isMoving = false;
     const delay = Math.max(0, completesAt - this.nowProvider());
     state.activeSearch.timer = setTimeout(() => {
       const currentRoom = this.rooms.get(room.code);
@@ -318,11 +356,12 @@ export class RoomService {
       const roleId = currentRoom.roleAssignments.get(player.id);
       const clue = createFoundClue(item.id, roleId);
       currentRoom.clueAssignments.get(player.id).cards.push(clue);
+      const safeClues = cloneExplorationClues(currentRoom.clueAssignments.get(player.id));
       if (typeof onResolved === "function") onResolved({
         room: this.toPublicRoom(currentRoom),
         playerId: player.id,
-        clue: { ...clue },
-        clues: cloneExplorationClues(currentRoom.clueAssignments.get(player.id)),
+        clue: safeClues.cards.at(-1),
+        clues: safeClues,
         exploration: this.toPrivateExploration(currentRoom, player.id)
       });
     }, delay);
@@ -354,7 +393,9 @@ export class RoomService {
     room.explorationReadyTimeoutAt = this.nowProvider() + this.explorationReadyTimeoutMs;
     for (const playerId of room.players.keys()) {
       room.explorationPlayers.set(playerId, {
+        ...createExplorationPosition(),
         location: null,
+        lastMovementAt: this.nowProvider(),
         investigatedObjectIds: new Set(),
         analysisUsed: false,
         activeSearch: null
@@ -380,7 +421,9 @@ export class RoomService {
     room.explorationEndsAt = startedAt + this.explorationDurationMs;
     room.explorationReadyTimeoutAt = null;
     room.state = "exploration";
-    for (const state of room.explorationPlayers.values()) state.location = "square";
+    for (const state of room.explorationPlayers.values()) {
+      Object.assign(state, createExplorationPosition(), { location: "square", lastMovementAt: startedAt });
+    }
     room.explorationTimer = setTimeout(() => this.finishExploration(room.code, onPhaseChange), this.explorationDurationMs);
     room.explorationTimer.unref?.();
     const publicRoom = this.toPublicRoom(room);
@@ -396,6 +439,7 @@ export class RoomService {
     for (const state of room.explorationPlayers.values()) {
       if (state.activeSearch?.timer) clearTimeout(state.activeSearch.timer);
       state.activeSearch = null;
+      state.isMoving = false;
     }
     room.state = "exploration_finished";
     const finishedRoom = this.toPublicRoom(room);
@@ -433,18 +477,37 @@ export class RoomService {
     const startedAt = this.nowProvider();
     room.discussionStartedAt = startedAt;
     room.discussionEndsAt = startedAt + this.discussionDurationMs;
+    room.reconstructionBoard.clear();
+    room.reconstructionVersion = 0;
+    room.reconstructionConfirmations.clear();
+    room.reconstructionLocked = false;
+    room.reconstructionResult = null;
+    room.reconstructionScore = null;
+    room.reconstructionRequiredScore = null;
+    room.reconstructionPassed = null;
     room.state = "discussion";
     this.clearDiscussionTimers(room);
-    room.discussionTimer = setTimeout(() => this.finishDiscussion(room.code, onPhaseChange), this.discussionDurationMs);
+    room.discussionTimer = setTimeout(() => this.finishDiscussion(room.code, onPhaseChange, "timeout"), this.discussionDurationMs);
     room.discussionTimer.unref?.();
     return { room: this.toPublicRoom(room), duplicate: false };
   }
 
-  finishDiscussion(roomCode, onPhaseChange) {
+  finishDiscussion(roomCode, onPhaseChange, reason = "timeout") {
     const room = this.rooms.get(roomCode);
     if (!room || room.state !== "discussion") return null;
     if (room.discussionTimer) clearTimeout(room.discussionTimer);
     room.discussionTimer = null;
+    room.reconstructionLocked = true;
+    room.reconstructionResult = evaluateReconstruction(
+      room.reconstructionBoard,
+      (ownerId, clueId) => room.clueAssignments.get(ownerId)?.cards.find((clue) => clue.id === clueId),
+      reason,
+      room.reconstructionVersion,
+      this.reconstructionRequiredScore
+    );
+    room.reconstructionScore = room.reconstructionResult.score;
+    room.reconstructionRequiredScore = room.reconstructionResult.requiredScore;
+    room.reconstructionPassed = room.reconstructionResult.passed;
     room.state = "discussion_finished";
     const finishedRoom = this.toPublicRoom(room);
     if (typeof onPhaseChange === "function") onPhaseChange("discussion_finished", finishedRoom);
@@ -461,10 +524,98 @@ export class RoomService {
     return finishedRoom;
   }
 
+  placeReconstructionClue(socketId, rawClueId, rawSlot, rawVersion) {
+    const { room, player } = this.getContextBySocket(socketId);
+    this.assertReconstructionMutable(room, rawVersion);
+    const slot = this.validateReconstructionSlot(rawSlot);
+    const clue = this.getOwnedClue(room, player.id, rawClueId);
+    if (room.reconstructionBoard.has(slot)) throw new AppError("SLOT_OCCUPIED");
+    if (this.findReconstructionPlacement(room, clue.id)) throw new AppError("CLUE_ALREADY_PLACED");
+    room.reconstructionBoard.set(slot, { clueId: clue.id, ownerId: player.id });
+    this.advanceReconstructionVersion(room);
+    return { room: this.toPublicRoom(room), operation: "place" };
+  }
+
+  moveReconstructionClue(socketId, rawClueId, rawSlot, rawVersion) {
+    const { room, player } = this.getContextBySocket(socketId);
+    this.assertReconstructionMutable(room, rawVersion);
+    const slot = this.validateReconstructionSlot(rawSlot);
+    const found = this.findReconstructionPlacement(room, rawClueId);
+    if (!found) throw new AppError("CLUE_NOT_FOUND");
+    if (found.placement.ownerId !== player.id) throw new AppError("NOT_CLUE_OWNER");
+    if (found.slot === slot) return { room: this.toPublicRoom(room), operation: "move", duplicate: true };
+    if (room.reconstructionBoard.has(slot)) throw new AppError("SLOT_OCCUPIED");
+    room.reconstructionBoard.delete(found.slot);
+    room.reconstructionBoard.set(slot, found.placement);
+    this.advanceReconstructionVersion(room);
+    return { room: this.toPublicRoom(room), operation: "move", duplicate: false };
+  }
+
+  removeReconstructionClue(socketId, rawClueId, rawVersion) {
+    const { room, player } = this.getContextBySocket(socketId);
+    this.assertReconstructionMutable(room, rawVersion);
+    const found = this.findReconstructionPlacement(room, rawClueId);
+    if (!found) throw new AppError("CLUE_NOT_FOUND");
+    if (found.placement.ownerId !== player.id) throw new AppError("NOT_CLUE_OWNER");
+    room.reconstructionBoard.delete(found.slot);
+    this.advanceReconstructionVersion(room);
+    return { room: this.toPublicRoom(room), operation: "remove" };
+  }
+
+  confirmReconstruction(socketId, rawVersion, onPhaseChange) {
+    const { room, player } = this.getContextBySocket(socketId);
+    this.assertReconstructionMutable(room, rawVersion);
+    if (room.reconstructionConfirmations.get(player.id) === room.reconstructionVersion) {
+      return { room: this.toPublicRoom(room), duplicate: true, locked: false };
+    }
+    room.reconstructionConfirmations.set(player.id, room.reconstructionVersion);
+    const connectedIds = [...room.players.values()].filter((item) => item.connected).map((item) => item.id);
+    const unanimous = connectedIds.every((id) => room.reconstructionConfirmations.get(id) === room.reconstructionVersion);
+    if (unanimous) {
+      return { room: this.finishDiscussion(room.code, onPhaseChange, "unanimity"), duplicate: false, locked: true };
+    }
+    return { room: this.toPublicRoom(room), duplicate: false, locked: false };
+  }
+
+  assertReconstructionMutable(room, rawVersion) {
+    if (room.state !== "discussion" || room.reconstructionLocked || this.nowProvider() >= room.discussionEndsAt) {
+      throw new AppError("RECONSTRUCTION_CLOSED");
+    }
+    if (!Number.isInteger(rawVersion) || rawVersion !== room.reconstructionVersion) throw new AppError("STALE_BOARD_VERSION");
+  }
+
+  validateReconstructionSlot(rawSlot) {
+    if (!Number.isInteger(rawSlot) || !reconstructionSteps.some((step) => step.id === rawSlot)) {
+      throw new AppError("INVALID_RECONSTRUCTION_SLOT");
+    }
+    return rawSlot;
+  }
+
+  getOwnedClue(room, playerId, rawClueId) {
+    if (typeof rawClueId !== "string") throw new AppError("INVALID_PAYLOAD");
+    const clue = room.clueAssignments.get(playerId)?.cards.find((item) => item.id === rawClueId);
+    if (!clue) throw new AppError("CLUE_NOT_FOUND");
+    return clue;
+  }
+
+  findReconstructionPlacement(room, clueId) {
+    for (const [slot, placement] of room.reconstructionBoard) {
+      if (placement.clueId === clueId) return { slot, placement };
+    }
+    return null;
+  }
+
+  advanceReconstructionVersion(room) {
+    room.reconstructionVersion += 1;
+    room.reconstructionConfirmations.clear();
+    this.touchRoom(room);
+  }
+
   startVotingRound(roomCode, round = "main", candidateIds = null, onPhaseChange) {
     const room = this.rooms.get(roomCode);
     const expectedState = round === "main" ? "ready_for_voting" : "voting";
     if (!room || (round === "main" ? room.state !== expectedState : !["voting", "vote_tiebreaker"].includes(room.state))) return null;
+    if (!this.validateReconstructionSnapshot(room)) return this.cancelInvalidCombinedResult(room, onPhaseChange);
     if (room.votingStartTimer) clearTimeout(room.votingStartTimer);
     room.votingStartTimer = null;
     room.votingRound = round;
@@ -506,6 +657,8 @@ export class RoomService {
   closeVoting(roomCode, onPhaseChange) {
     const room = this.rooms.get(roomCode);
     if (!room || !["voting", "vote_tiebreaker"].includes(room.state)) return null;
+    const reconstruction = this.validateReconstructionSnapshot(room);
+    if (!reconstruction) return this.cancelInvalidCombinedResult(room, onPhaseChange);
     if (room.votingTimer) clearTimeout(room.votingTimer);
     room.votingTimer = null;
     const round = room.votingRound;
@@ -532,7 +685,9 @@ export class RoomService {
     if (round === "main" && count.tied) {
       return this.startVotingRound(roomCode, "tiebreaker", count.topCandidateIds, onPhaseChange);
     }
-    room.finalResult = this.buildFinalResult(room, count, round === "tiebreaker" && count.tied);
+    room.finalResult = this.buildFinalResult(room, count, round === "tiebreaker" && count.tied, reconstruction);
+    room.creatureIdentified = room.finalResult.accusation.creatureIdentified;
+    room.outcomeCode = room.finalResult.outcomeCode;
     room.state = "calculating_result";
     const calculatingRoom = this.toPublicRoom(room);
     if (typeof onPhaseChange === "function") onPhaseChange("calculating_result", calculatingRoom);
@@ -613,6 +768,7 @@ export class RoomService {
       role: canReceiveRole ? toPrivateRole(room.roleAssignments.get(player.id)) : null,
       clues: canReceiveClues ? cloneExplorationClues(room.clueAssignments.get(player.id)) : null,
       exploration: canReceiveClues ? this.toPrivateExploration(room, player.id) : null,
+      reconstructionConfirmationVersion: room.reconstructionConfirmations.get(player.id) ?? null,
       chatHistory: canReceiveHistory ? room.chatMessages.map((message) => this.toPublicChatMessage(message)) : null,
       hasVoted: ["voting", "vote_tiebreaker"].includes(room.state) ? room.votes.has(player.id) : false,
       serverTime: this.nowProvider()
@@ -685,13 +841,15 @@ export class RoomService {
         readyCount: room.explorationReady.size,
         total: room.players.size,
         activePlayers: [...room.players.values()].filter((player) => player.connected).length,
-        zones: toPublicExplorationMap()
+        zones: toPublicExplorationMap(),
+        world: toPublicExplorationWorld()
       } : null,
       discussion: room.discussionStartedAt === null ? null : {
         startedAt: room.discussionStartedAt,
         endsAt: room.discussionEndsAt,
         durationSeconds: Math.round(this.discussionDurationMs / 1_000)
       },
+      reconstruction: room.discussionStartedAt === null ? null : this.toPublicReconstruction(room),
       votingDurationSeconds: Math.round(this.votingDurationMs / 1_000),
       tiebreakerDurationSeconds: Math.round(this.tiebreakerDurationMs / 1_000),
       voting: this.toPublicVoting(room),
@@ -710,7 +868,9 @@ export class RoomService {
           connected: player.connected,
           reconnectDeadline: player.connected ? null : player.reconnectDeadline,
           isHost: room.hostId === player.id,
-          zoneId: ["exploration", "exploration_finished"].includes(room.state) ? room.explorationPlayers.get(player.id)?.location || null : null
+          zoneId: ["exploration", "exploration_finished"].includes(room.state) ? room.explorationPlayers.get(player.id)?.location || null : null,
+          explorationState: ["exploration", "exploration_finished"].includes(room.state)
+            ? this.toPublicPlayerPosition(room.explorationPlayers.get(player.id)) : null
         }))
     };
   }
@@ -769,6 +929,14 @@ export class RoomService {
     room.explorationReadyTimeoutAt = null;
     room.discussionStartedAt = null;
     room.discussionEndsAt = null;
+    room.reconstructionBoard.clear();
+    room.reconstructionVersion = 0;
+    room.reconstructionConfirmations.clear();
+    room.reconstructionLocked = false;
+    room.reconstructionResult = null;
+    room.reconstructionScore = null;
+    room.reconstructionRequiredScore = null;
+    room.reconstructionPassed = null;
     room.chatMessages.length = 0;
     room.chatRate.clear();
     room.gameParticipants.clear();
@@ -781,6 +949,8 @@ export class RoomService {
     room.voteRequestAt.clear();
     room.voteRoundHistory.length = 0;
     room.finalResult = null;
+    room.creatureIdentified = null;
+    room.outcomeCode = null;
   }
 
   clearDiscussionTimers(room) {
@@ -840,15 +1010,73 @@ export class RoomService {
     };
   }
 
+  toPublicReconstruction(room) {
+    const connectedIds = [...room.players.values()].filter((player) => player.connected).map((player) => player.id);
+    const confirmed = connectedIds.filter((id) => room.reconstructionConfirmations.get(id) === room.reconstructionVersion).length;
+    return {
+      version: room.reconstructionVersion,
+      locked: room.reconstructionLocked,
+      progress: { confirmed, total: connectedIds.length },
+      slots: reconstructionSteps.map((step) => {
+        const placement = room.reconstructionBoard.get(step.id);
+        if (!placement) return { id: step.id, title: step.title, clue: null };
+        const clue = room.clueAssignments.get(placement.ownerId)?.cards.find((item) => item.id === placement.clueId);
+        const owner = room.players.get(placement.ownerId) || room.gameParticipants.get(placement.ownerId);
+        return {
+          id: step.id,
+          title: step.title,
+          clue: clue ? {
+            id: clue.id,
+            title: clue.title,
+            text: clue.text,
+            zoneId: clue.zoneId,
+            zoneName: clue.zoneName,
+            objectId: clue.objectId,
+            objectName: clue.objectName,
+            ownerId: placement.ownerId,
+            ownerName: owner?.name || "Jugador"
+          } : null
+        };
+      }),
+      result: room.reconstructionLocked && room.reconstructionResult ? {
+        score: room.reconstructionResult.score,
+        required: room.reconstructionResult.requiredScore,
+        passed: room.reconstructionResult.passed,
+        finalVersion: room.reconstructionResult.finalVersion,
+        reason: room.reconstructionResult.reason,
+        message: room.reconstructionResult.passed
+          ? "La historia comienza a tomar forma, pero todavía deben descubrir quién intentó alterarla."
+          : "Las piezas no encajan. Alguien consiguió sembrar una versión falsa entre las pruebas."
+      } : null
+    };
+  }
+
   toPrivateExploration(room, playerId) {
     const state = room.explorationPlayers.get(playerId);
     if (!state) return null;
     return {
       location: state.location,
+      sceneId: state.sceneId,
+      x: state.x,
+      y: state.y,
+      direction: state.direction,
+      isMoving: state.isMoving,
       investigatedObjectIds: [...state.investigatedObjectIds],
       clueCount: room.clueAssignments.get(playerId)?.cards.length || 0,
       analysisUsed: state.analysisUsed,
       activeSearch: state.activeSearch ? { objectId: state.activeSearch.objectId, completesAt: state.activeSearch.completesAt } : null
+    };
+  }
+
+  toPublicPlayerPosition(state) {
+    if (!state) return null;
+    return {
+      sceneId: state.sceneId,
+      x: state.x,
+      y: state.y,
+      direction: state.direction,
+      isMoving: Boolean(state.isMoving),
+      investigating: Boolean(state.activeSearch)
     };
   }
 
@@ -876,16 +1104,88 @@ export class RoomService {
     };
   }
 
-  buildFinalResult(room, finalCount, persistentTie) {
+  validateReconstructionSnapshot(room) {
+    const stored = room.reconstructionResult;
+    if (!room.reconstructionLocked || !stored || !Number.isInteger(stored.score) || stored.score < 0 || stored.score > 5
+      || !Number.isInteger(stored.requiredScore) || stored.requiredScore < 1 || stored.requiredScore > 5
+      || stored.finalVersion !== room.reconstructionVersion
+      || room.reconstructionScore !== stored.score
+      || room.reconstructionRequiredScore !== stored.requiredScore
+      || room.reconstructionPassed !== stored.passed) return null;
+    let recalculated;
+    try {
+      recalculated = evaluateReconstruction(
+        room.reconstructionBoard,
+        (ownerId, clueId) => room.clueAssignments.get(ownerId)?.cards.find((clue) => clue.id === clueId),
+        stored.reason,
+        stored.finalVersion,
+        stored.requiredScore
+      );
+    } catch {
+      return null;
+    }
+    if (recalculated.score !== stored.score || recalculated.passed !== stored.passed
+      || JSON.stringify(recalculated.correctSlots) !== JSON.stringify(stored.correctSlots)
+      || JSON.stringify(recalculated.incorrectSlots) !== JSON.stringify(stored.incorrectSlots)
+      || JSON.stringify(recalculated.usedClues) !== JSON.stringify(stored.usedClues)) return null;
+    return stored;
+  }
+
+  cancelInvalidCombinedResult(room, onPhaseChange) {
+    this.clearGameData(room);
+    const publicRoom = this.toPublicRoom(room);
+    if (typeof onPhaseChange === "function") onPhaseChange("game_error", publicRoom, {
+      code: "INTERNAL_ERROR",
+      message: "No fue posible verificar el resultado de la reconstrucción. La partida regresó a la sala de forma segura."
+    });
+    return publicRoom;
+  }
+
+  buildFinalReconstructionReveal(room, reconstruction) {
+    return {
+      score: reconstruction.score,
+      required: reconstruction.requiredScore,
+      passed: reconstruction.passed,
+      finalVersion: reconstruction.finalVersion,
+      reason: reconstruction.reason,
+      trueOrder: reconstructionTruth.map((step) => ({ ...step })),
+      slots: reconstructionSteps.map((step) => {
+        const placement = room.reconstructionBoard.get(step.id);
+        const clue = placement && room.clueAssignments.get(placement.ownerId)?.cards.find((item) => item.id === placement.clueId);
+        const owner = placement && (room.gameParticipants.get(placement.ownerId) || room.players.get(placement.ownerId));
+        return {
+          id: step.id,
+          title: step.title,
+          correct: Boolean(clue?.isAuthentic && clue.canonicalStep === step.id),
+          clue: clue ? {
+            title: clue.title,
+            text: clue.text,
+            zoneName: clue.zoneName,
+            objectName: clue.objectName,
+            ownerName: owner?.name || "Jugador",
+            authentic: Boolean(clue.isAuthentic),
+            canonicalStep: clue.canonicalStep,
+            canonicalStepTitle: reconstructionSteps.find((item) => item.id === clue.canonicalStep)?.title || "Desconocida"
+          } : null
+        };
+      })
+    };
+  }
+
+  buildFinalResult(room, finalCount, persistentTie, reconstruction = this.validateReconstructionSnapshot(room)) {
+    if (!reconstruction) throw new TypeError("La reconstrucción final no es válida.");
     const participants = [...room.gameParticipants.values()].sort((first, second) => first.joinedAt - second.joinedAt);
     const creatureId = [...room.roleAssignments.entries()].find(([, roleId]) => roleId === "creature")?.[0] || null;
     const selectedPlayerId = persistentTie ? null : finalCount.selectedCandidateId;
-    const winner = !persistentTie && selectedPlayerId === creatureId ? "village" : "creature";
-    const message = persistentTie
-      ? "El pueblo no consiguió llegar a una decisión. La criatura aprovechó la confusión y permaneció oculta."
-      : winner === "village"
-        ? "El pueblo descubrió a la criatura antes de que volviera a caer la noche."
-        : "El pueblo acusó a un inocente. La criatura continúa oculta entre la neblina.";
+    const outcome = calculateFinalOutcome({
+      reconstructionScore: reconstruction.score,
+      requiredScore: reconstruction.requiredScore,
+      accusedPlayerId: selectedPlayerId,
+      creaturePlayerId: creatureId,
+      persistentTie
+    });
+    const winner = outcome.winnerTeam;
+    const message = OUTCOME_DETAILS[outcome.outcomeCode].message;
     const rounds = room.voteRoundHistory.map((round) => ({
       round: round.round,
       validVotes: round.count.validVotes,
@@ -905,6 +1205,8 @@ export class RoomService {
     }));
     return {
       winner,
+      winnerTeam: outcome.winnerTeam,
+      outcomeCode: outcome.outcomeCode,
       title: winner === "village" ? "Victoria del pueblo" : "Victoria de la criatura",
       message,
       creatureName: room.gameParticipants.get(creatureId)?.name || "Jugador",
@@ -912,6 +1214,15 @@ export class RoomService {
       tiedPlayerNames: persistentTie ? finalCount.topCandidateIds.map((id) => room.gameParticipants.get(id)?.name || "Jugador") : [],
       tiebreakerUsed: room.voteRoundHistory.some((round) => round.round === "tiebreaker"),
       persistentTie,
+      reconstruction: this.buildFinalReconstructionReveal(room, reconstruction),
+      accusation: {
+        accusedPlayer: selectedPlayerId ? {
+          name: room.gameParticipants.get(selectedPlayerId)?.name || "Jugador",
+          role: getRoleDefinition(room.roleAssignments.get(selectedPlayerId))?.name || "Desconocido"
+        } : null,
+        creatureIdentified: outcome.creatureIdentified,
+        persistentTie
+      },
       totalAbstentions: rounds.reduce((sum, round) => sum + round.abstentions, 0),
       players: participants.map((participant) => {
         const roleId = room.roleAssignments.get(participant.id);

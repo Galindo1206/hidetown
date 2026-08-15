@@ -11,8 +11,9 @@
     "test": "node --test --test-concurrency=1",
     "test:rc": "node --test test/releaseCandidate.test.js --test-concurrency=1",
     "test:production": "node --test test/production.test.js --test-concurrency=1",
+    "smoke:production": "node scripts/production-smoke.mjs",
     "audit:browser": "node scripts/visual-browser-audit.mjs",
-    "check": "node --check server/server.js && node --check server/config/environment.js && node --check server/config/version.js && node --check server/services/roomService.js && node --check server/socket/roomHandlers.js && node --check server/utils/errors.js && node --check server/utils/logger.js && node --check server/utils/validators.js && node --check server/utils/rateLimiter.js && node --check server/chat/messageValidator.js && node --check server/game/assignRoles.js && node --check server/game/clueDefinitions.js && node --check server/game/distributeClues.js && node --check server/game/explorationDefinitions.js && node --check server/game/countVotes.js && node --check js/audioManager.js && node --check js/app.js && node --check js/multiplayer.js && node --check scripts/visual-browser-audit.mjs"
+    "check": "node --check server/server.js && node --check server/config/environment.js && node --check server/config/version.js && node --check server/services/roomService.js && node --check server/socket/roomHandlers.js && node --check server/utils/errors.js && node --check server/utils/logger.js && node --check server/utils/validators.js && node --check server/utils/rateLimiter.js && node --check server/chat/messageValidator.js && node --check server/game/assignRoles.js && node --check server/game/clueDefinitions.js && node --check server/game/distributeClues.js && node --check server/game/explorationDefinitions.js && node --check server/game/explorationWorld.js && node --check server/game/reconstructionDefinitions.js && node --check server/game/calculateFinalOutcome.js && node --check server/game/countVotes.js && node --check js/audioManager.js && node --check js/app.js && node --check js/multiplayer.js && node --check js/game/config/locations.js && node --check js/game/config/interactables.js && node --check js/game/entities/LocalPlayer.js && node --check js/game/entities/RemotePlayer.js && node --check js/game/systems/MovementSystem.js && node --check js/game/systems/InteractionSystem.js && node --check js/game/systems/NetworkSystem.js && node --check js/game/systems/ExplorationAudio.js && node --check js/game/scenes/PreloadScene.js && node --check js/game/scenes/BaseExplorationScene.js && node --check js/game/scenes/VillageScene.js && node --check js/game/scenes/ChurchScene.js && node --check js/game/scenes/CaretakerHouseScene.js && node --check js/game/scenes/BellTowerScene.js && node --check js/game/explorationGame.js && node --check scripts/production-smoke.mjs && node --check scripts/visual-browser-audit.mjs"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -20,6 +21,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "phaser": "3.90.0",
     "socket.io": "^4.8.3"
   },
   "devDependencies": {

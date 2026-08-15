@@ -53,6 +53,26 @@ export const explorationZones = Object.freeze(zoneDefinitions.map((zone) => Obje
 const zonesById = new Map(explorationZones.map((zone) => [zone.id, zone]));
 const objectsById = new Map(explorationZones.flatMap((zone) => zone.objects.map((item) => [item.id, { ...item, zoneId: zone.id, zoneName: zone.name }])));
 
+// This chronology is deliberately server-only. It must never be included in a
+// public map or in the private clue DTO sent to a player.
+const canonicalSteps = Object.freeze({
+  "mud-prints": 1,
+  fountain: 1,
+  candles: 2,
+  "western-window": 2,
+  "mud-trail": 2,
+  "bell-rope": 3,
+  "stopped-clock": 3,
+  "bell-mechanism": 3,
+  "dusty-stairs": 3,
+  altar: 4,
+  "old-post": 4,
+  "locked-chest": 4,
+  "old-key": 4,
+  "ash-remains": 4,
+  "caretaker-diary": 5
+});
+
 export function getExplorationZone(zoneId) {
   return zonesById.get(zoneId) || null;
 }
@@ -84,7 +104,10 @@ export function createFoundClue(objectId, roleId) {
     title: item.title,
     text: distorted ? item.distortion : item.truth,
     reliability: distorted ? "Versión incierta" : "Evidencia encontrada",
-    analysis: null
+    analysis: null,
+    isAuthentic: !distorted,
+    canonicalStep: canonicalSteps[item.id],
+    suggestedStep: distorted ? ((canonicalSteps[item.id] % 5) + 1) : null
   };
 }
 
@@ -102,7 +125,18 @@ export function explorationInstructions(roleId) {
 export function cloneExplorationClues(assignment) {
   if (!assignment) return null;
   return {
-    cards: assignment.cards.map((card) => ({ ...card })),
+    cards: assignment.cards.map((card) => ({
+      id: card.id,
+      objectId: card.objectId,
+      objectName: card.objectName,
+      zoneId: card.zoneId,
+      zoneName: card.zoneName,
+      type: card.type,
+      title: card.title,
+      text: card.text,
+      reliability: card.reliability,
+      analysis: card.analysis
+    })),
     observation: null,
     instructions: assignment.instructions
   };

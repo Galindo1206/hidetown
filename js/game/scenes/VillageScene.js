@@ -1,0 +1,1 @@
+(function () { "use strict"; class VillageScene extends window.HideTownGame.BaseExplorationScene { constructor() { super("VillageScene", "village"); } } window.HideTownGame.VillageScene = VillageScene; })();

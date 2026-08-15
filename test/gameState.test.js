@@ -85,7 +85,7 @@ test("rechaza transiciones fuera de orden y acciones sin permisos", () => {
   service.startGame(sockets[0]);
   assert.throws(() => service.confirmRole(sockets[0]), (error) => assertCode(error, "INVALID_STATE"));
   assert.throws(() => service.confirmExplorationReady(sockets[0]), (error) => assertCode(error, "INVALID_STATE"));
-  assert.throws(() => service.moveDuringExploration(sockets[0], "square"), (error) => assertCode(error, "EXPLORATION_CLOSED"));
+  assert.throws(() => service.updateExplorationPosition(sockets[0], { sceneId: "village", x: 800, y: 690, direction: "down", isMoving: false }), (error) => assertCode(error, "EXPLORATION_CLOSED"));
   assert.throws(() => service.resetGame(sockets[1]), (error) => assertCode(error, "NOT_HOST"));
   service.clear();
 });

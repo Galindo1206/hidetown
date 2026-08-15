@@ -50,8 +50,9 @@ export function createEnvironment(source = process.env) {
     logLevel,
     rateLimitWindowMs: readInteger(source, "RATE_LIMIT_WINDOW_MS", 10_000, { min: 1_000, max: 60_000 }),
     rateLimitMaxActions: readInteger(source, "RATE_LIMIT_MAX_ACTIONS", 8, { min: 1, max: 100 }),
-    explorationDurationSeconds: readInteger(source, "EXPLORATION_DURATION_SECONDS", 60, { min: 30, max: 180 }),
+    explorationDurationSeconds: readInteger(source, "EXPLORATION_DURATION_SECONDS", 90, { min: 30, max: 180 }),
     discussionDurationSeconds: readInteger(source, "DISCUSSION_DURATION_SECONDS", 240, { min: 30, max: 600 }),
+    reconstructionRequiredScore: readInteger(source, "RECONSTRUCTION_REQUIRED_SCORE", 4, { min: 1, max: 5 }),
     votingDurationSeconds: readInteger(source, "VOTING_DURATION_SECONDS", 60, { min: 15, max: 180 }),
     tiebreakerDurationSeconds: readInteger(source, "TIEBREAKER_DURATION_SECONDS", 30, { min: 10, max: 120 })
   });

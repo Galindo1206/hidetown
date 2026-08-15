@@ -46,12 +46,18 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
         exploration: privateState.explorationReady
       },
       voting: { hasVoted: privateState.hasVoted },
+      reconstruction: { confirmedVersion: privateState.reconstructionConfirmationVersion },
       exploration: privateState.exploration
     });
     if (privateState.role) targetSocket.emit("role:assigned", privateState.role);
     if (privateState.clues) targetSocket.emit("clues:assigned", privateState.clues);
     if (privateState.room.discussion) {
       targetSocket.emit("discussion:state", { room: privateState.room, serverTime: privateState.serverTime });
+      targetSocket.emit("reconstruction:started", {
+        room: privateState.room,
+        reconstruction: privateState.room.reconstruction,
+        serverTime: privateState.serverTime
+      });
       targetSocket.emit("chat:history", { messages: privateState.chatHistory || [] });
     }
     if (privateState.room.state === "game_finished" && privateState.room.result) {
@@ -82,10 +88,10 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
     broadcastRoom(room);
   }
 
-  function bind(eventName, action, { limited = false, payloadRequired = true, allowedKeys = null, requiredKeys = allowedKeys, errorEvent = "room:error" } = {}) {
+  function bind(eventName, action, { limited = false, consumeAction = true, payloadRequired = true, allowedKeys = null, requiredKeys = allowedKeys, errorEvent = "room:error" } = {}) {
     socket.on(eventName, async (payload, ack) => {
       try {
-        actionRateLimiter.consume(socket.id);
+        if (consumeAction) actionRateLimiter.consume(socket.id);
         if (limited) rateLimiter.consume(attemptKey);
         const safePayload = allowedKeys
           ? requireExactObject(payload ?? {}, allowedKeys, requiredKeys)
@@ -192,12 +198,17 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
     return { progress: result.room.progress, state: result.room.state, duplicate: result.duplicate };
   }, { payloadRequired: false, allowedKeys: [], errorEvent: "exploration:error" });
 
-  bind("exploration:move", ({ zoneId }) => {
-    const result = roomService.moveDuringExploration(socket.id, zoneId);
-    io.to(result.room.code).emit("exploration:location-updated", { playerId: result.playerId, zoneId: result.zoneId, room: result.room });
-    broadcastRoom(result.room);
-    return { room: result.room, zoneId: result.zoneId };
-  }, { allowedKeys: ["zoneId"], errorEvent: "exploration:error" });
+  bind("exploration:position", (position) => {
+    const result = roomService.updateExplorationPosition(socket.id, position);
+    socket.to(result.roomCode).emit("exploration:player-state", { playerId: result.playerId, position: result.position });
+    return { position: result.position };
+  }, { consumeAction: false, allowedKeys: ["sceneId", "x", "y", "direction", "isMoving"], errorEvent: "exploration:error" });
+
+  bind("exploration:transition", ({ targetSceneId }) => {
+    const result = roomService.transitionExplorationScene(socket.id, targetSceneId);
+    io.to(result.room.code).emit("exploration:scene-changed", { playerId: result.playerId, position: result.position, room: result.room });
+    return { room: result.room, position: result.position };
+  }, { allowedKeys: ["targetSceneId"], errorEvent: "exploration:error" });
 
   bind("exploration:investigate", async ({ objectId }) => {
     const search = roomService.investigateDuringExploration(socket.id, objectId, async (result) => {
@@ -206,8 +217,17 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
         target.emit("exploration:clue-found", { clue: result.clue, clues: result.clues, exploration: result.exploration });
         emitPrivateGameState(target);
       }
+      io.to(result.room.code).emit("exploration:player-state", {
+        playerId: result.playerId,
+        position: result.room.players.find((player) => player.id === result.playerId)?.explorationState
+      });
     });
     socket.emit("exploration:search-started", search);
+    const room = roomService.getPrivateGameStateBySocket(socket.id).room;
+    io.to(room.code).emit("exploration:player-state", {
+      playerId: socket.data.playerId,
+      position: room.players.find((player) => player.id === socket.data.playerId)?.explorationState
+    });
     return search;
   }, { allowedKeys: ["objectId"], errorEvent: "exploration:error" });
 
@@ -222,6 +242,8 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
     if (!room) return;
     if (phase === "discussion_finished") {
       io.to(room.code).emit("discussion:finished", { room, serverTime: Date.now() });
+      io.to(room.code).emit("reconstruction:locked", { room, reconstruction: room.reconstruction, serverTime: Date.now() });
+      io.to(room.code).emit("reconstruction:result", { room, result: room.reconstruction?.result, serverTime: Date.now() });
     } else if (phase === "ready_for_voting") {
       io.to(room.code).emit("game:ready-for-voting", { room, serverTime: Date.now() });
     } else if (phase === "voting") {
@@ -232,6 +254,13 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
       io.to(room.code).emit("voting:closed", { room, summary: details, serverTime: Date.now() });
     } else if (phase === "game_finished") {
       io.to(room.code).emit("game:result", { room, result: room.result, serverTime: Date.now() });
+    } else if (phase === "game_error") {
+      logger.error?.("combined_result_invalid", { roomState: room.state, code: details?.code || "INTERNAL_ERROR" });
+      io.to(room.code).emit("game:error", {
+        code: "INTERNAL_ERROR",
+        message: details?.message || "No fue posible completar la partida de forma segura.",
+        recoverable: true
+      });
     }
     io.to(room.code).emit("game:state", { room });
     broadcastRoom(room);
@@ -241,11 +270,56 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
     const result = roomService.startDiscussion(socket.id, broadcastDiscussionPhase);
     if (!result.duplicate) {
       io.to(result.room.code).emit("discussion:started", { room: result.room, serverTime: Date.now() });
+      io.to(result.room.code).emit("reconstruction:started", { room: result.room, reconstruction: result.room.reconstruction, serverTime: Date.now() });
       io.to(result.room.code).emit("game:state", { room: result.room });
       broadcastRoom(result.room);
     }
     return { room: result.room, duplicate: result.duplicate, serverTime: Date.now() };
   }, { payloadRequired: false, allowedKeys: [], errorEvent: "game:error" });
+
+  function broadcastReconstructionUpdate(result) {
+    const payload = {
+      room: result.room,
+      reconstruction: result.room.reconstruction,
+      operation: result.operation,
+      serverTime: Date.now()
+    };
+    io.to(result.room.code).emit("reconstruction:board-updated", payload);
+    io.to(result.room.code).emit("reconstruction:progress", {
+      room: result.room,
+      progress: result.room.reconstruction.progress,
+      version: result.room.reconstruction.version
+    });
+    io.to(result.room.code).emit("game:state", { room: result.room });
+    broadcastRoom(result.room);
+    return payload;
+  }
+
+  bind("reconstruction:place", ({ clueId, slot, boardVersion }) => {
+    return broadcastReconstructionUpdate(roomService.placeReconstructionClue(socket.id, clueId, slot, boardVersion));
+  }, { allowedKeys: ["clueId", "slot", "boardVersion"], errorEvent: "reconstruction:error" });
+
+  bind("reconstruction:move", ({ clueId, slot, boardVersion }) => {
+    return broadcastReconstructionUpdate(roomService.moveReconstructionClue(socket.id, clueId, slot, boardVersion));
+  }, { allowedKeys: ["clueId", "slot", "boardVersion"], errorEvent: "reconstruction:error" });
+
+  bind("reconstruction:remove", ({ clueId, boardVersion }) => {
+    return broadcastReconstructionUpdate(roomService.removeReconstructionClue(socket.id, clueId, boardVersion));
+  }, { allowedKeys: ["clueId", "boardVersion"], errorEvent: "reconstruction:error" });
+
+  bind("reconstruction:confirm", ({ boardVersion }) => {
+    const result = roomService.confirmReconstruction(socket.id, boardVersion, broadcastDiscussionPhase);
+    if (!result.locked) {
+      io.to(result.room.code).emit("reconstruction:progress", {
+        room: result.room,
+        progress: result.room.reconstruction.progress,
+        version: result.room.reconstruction.version
+      });
+      io.to(result.room.code).emit("game:state", { room: result.room });
+      broadcastRoom(result.room);
+    }
+    return { room: result.room, duplicate: result.duplicate, locked: result.locked };
+  }, { allowedKeys: ["boardVersion"], errorEvent: "reconstruction:error" });
 
   bind("chat:send", ({ text }) => {
     const message = roomService.sendChatMessage(socket.id, text);
