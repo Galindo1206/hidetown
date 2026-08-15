@@ -47,7 +47,9 @@ export function registerRoomHandlers({ io, socket, roomService, rateLimiter, act
       },
       voting: { hasVoted: privateState.hasVoted },
       reconstruction: { confirmedVersion: privateState.reconstructionConfirmationVersion },
-      exploration: privateState.exploration
+      exploration: privateState.exploration,
+      clues: privateState.clues,
+      serverTime: privateState.serverTime
     });
     if (privateState.role) targetSocket.emit("role:assigned", privateState.role);
     if (privateState.clues) targetSocket.emit("clues:assigned", privateState.clues);

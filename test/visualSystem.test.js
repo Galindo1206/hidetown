@@ -46,13 +46,24 @@ test("roles, pistas y votos reciben indicadores adicionales al color", async () 
   assert.match(components, /data-clue-type="fragment"/);
 });
 
-test("el mapa de exploración conserva controles accesibles y adaptación móvil", async () => {
-  const [html, app, components] = await Promise.all([read("index.html"), read("js/app.js"), read("css/components.css")]);
+test("el mapa de exploración conserva controles accesibles, recuperación y adaptación móvil", async () => {
+  const [html, app, game, preload, components] = await Promise.all([
+    read("index.html"), read("js/app.js"), read("js/game/explorationGame.js"),
+    read("js/game/scenes/PreloadScene.js"), read("css/components.css")
+  ]);
   assert.match(html, /id="exploration-timer" role="timer"/);
   assert.match(html, /id="exploration-canvas" aria-label=/);
   assert.match(html, /id="virtual-joystick" role="group"/);
   assert.match(html, /id="open-exploration-notebook"/);
-  assert.match(app, /explorationGame\.mount/);
+  assert.match(html, /id="exploration-loading-retry"[^>]*>Reintentar</);
+  assert.match(app, /function mountExplorationGame\(state\)/);
+  assert.match(app, /multiplayer\.on\("exploration-state"[\s\S]*mountExplorationGame/);
+  assert.match(app, /multiplayer\.on\("restored"[\s\S]*mountExplorationGame/);
+  assert.match(game, /if \(this\.instance\) return this\.sync\(room\)/);
+  assert.match(game, /LOAD_TIMEOUT_MS = 12_000/);
+  assert.match(preload, /loaderror/);
+  assert.match(preload, /createCanvas\(file\.key/);
+  assert.match(preload, /essentialLoadFailed/);
   assert.match(app, /hidetown:move/);
   assert.match(app, /announce\(threshold === 5/);
   assert.match(components, /@media \(max-width: 700px\)/);

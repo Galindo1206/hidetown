@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { createEnvironment } from "../server/config/environment.js";
 import { createGameServer } from "../server/server.js";
 import { createLogger } from "../server/utils/logger.js";
@@ -17,6 +19,24 @@ const baseConfig = {
   rateLimitWindowMs: 1_000,
   rateLimitMaxActions: 20
 };
+
+test("las rutas web locales respetan exactamente las mayúsculas de Linux", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  const paths = [...html.matchAll(/(?:src|href)=["']([^"']+)["']/g)]
+    .map((match) => match[1])
+    .filter((path) => !path.startsWith("#") && !path.startsWith("/socket.io/") && path !== "/vendor/phaser.js");
+  const rootPath = fileURLToPath(new URL("../", import.meta.url));
+
+  for (const webPath of paths) {
+    assert.doesNotMatch(webPath, /^(?:[a-z]:|file:|\.\.\/)/i, webPath);
+    let current = rootPath;
+    for (const segment of webPath.replace(/^\//, "").split("/")) {
+      const entries = await readdir(current);
+      assert.ok(entries.includes(segment), `La ruta ${webPath} no coincide en mayúsculas: ${segment}`);
+      current = join(current, segment);
+    }
+  }
+});
 
 test("producción exige PORT válido y rechaza orígenes o niveles inválidos", () => {
   assert.throws(() => createEnvironment({ NODE_ENV: "production" }), /PORT/);

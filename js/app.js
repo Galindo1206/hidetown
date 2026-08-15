@@ -10,7 +10,11 @@
   const explorationGame = new window.ExplorationGame({
     multiplayer,
     audio,
-    onError(error) { showNotice(document.querySelector("#exploration-notice"), error.message, "error"); }
+    onError(error) { showNotice(document.querySelector("#exploration-notice"), error.message, "error"); },
+    onRetry() {
+      explorationGame.destroy();
+      void mountExplorationGame(multiplayer.currentRoom);
+    }
   });
   let copyFeedbackTimer;
   let roleWasRevealed = false;
@@ -23,9 +27,54 @@
   let reviewReturnScreen = "voting-ready";
   let connectionAlertTimer;
   let connectionWakeTimer;
+  let explorationMountPromise = null;
+  let latestExplorationState = null;
   let lastPublicErrorCode = "NINGUNO";
   let lastReportableStage = "menu";
   const timerWarningsPlayed = new Set();
+
+  function missingExplorationResource(room) {
+    if (!document.querySelector("#exploration-canvas")?.isConnected) return "#exploration-canvas";
+    if (!window.Phaser) return "/vendor/phaser.js";
+    const scripts = [
+      ["PreloadScene", "/js/game/scenes/PreloadScene.js"], ["VillageScene", "/js/game/scenes/VillageScene.js"],
+      ["ChurchScene", "/js/game/scenes/ChurchScene.js"], ["CaretakerHouseScene", "/js/game/scenes/CaretakerHouseScene.js"],
+      ["BellTowerScene", "/js/game/scenes/BellTowerScene.js"], ["ExplorationAudio", "/js/game/systems/ExplorationAudio.js"]
+    ];
+    const missingScript = scripts.find(([name]) => !window.HideTownGame?.[name]);
+    if (missingScript) return missingScript[1];
+    if (!room?.exploration?.world) return "game:state.exploration.world";
+    if (!multiplayer.privateExploration) return "game:state.exploration";
+    return null;
+  }
+
+  function mountExplorationGame(state) {
+    if (state?.state === "exploration") latestExplorationState = state;
+    const room = latestExplorationState || multiplayer.currentRoom;
+    if (room?.state !== "exploration") return Promise.resolve(false);
+    if (explorationGame.mounted) return Promise.resolve(explorationGame.sync(room));
+    if (explorationMountPromise) return explorationMountPromise;
+
+    explorationGame.showLoading();
+    explorationMountPromise = new Promise((resolve) => {
+      const startedAt = Date.now();
+      const attempt = () => {
+        const currentRoom = latestExplorationState || multiplayer.currentRoom;
+        if (currentRoom?.state !== "exploration") { resolve(false); return; }
+        const missing = missingExplorationResource(currentRoom);
+        if (!missing && explorationGame.mount(currentRoom)) { resolve(true); return; }
+        if (explorationGame.failed) { resolve(false); return; }
+        if (Date.now() - startedAt >= 12_000) {
+          explorationGame.showError(`No se pudo cargar el mapa. Recurso pendiente o fallido: ${missing || "Phaser"}. Pulsa Reintentar.`);
+          resolve(false);
+          return;
+        }
+        window.setTimeout(attempt, 50);
+      };
+      window.requestAnimationFrame(attempt);
+    }).finally(() => { explorationMountPromise = null; });
+    return explorationMountPromise;
+  }
 
   const screenNames = {
     menu: "Menú principal",
@@ -891,7 +940,11 @@
     if (["role_reveal", "waiting_ready"].includes(room.state)) renderRoleStage(room);
     if (room.state === "ready_for_exploration") renderExplorationReady(room);
     if (room.state === "exploration") renderExploration(room);
-    if (room.state !== "exploration") { window.clearInterval(explorationClockInterval); explorationGame.destroy(); }
+    if (room.state !== "exploration") {
+      latestExplorationState = null;
+      window.clearInterval(explorationClockInterval);
+      explorationGame.destroy();
+    }
     if (room.state === "ready_for_discussion") renderDiscussionStage(room);
     if (["discussion", "discussion_finished"].includes(room.state)) renderLiveDiscussion(room);
     if (room.state === "ready_for_voting") renderVotingReady(room);
@@ -903,7 +956,7 @@
     if (room.state !== "game_finished") delete document.body.dataset.outcome;
     renderGameState(room);
     navigation.goTo(stateScreens[room.state] || "waiting-room");
-    if (room.state === "exploration") window.requestAnimationFrame(() => explorationGame.mount(room));
+    if (room.state === "exploration") void mountExplorationGame(room);
   }
 
   function clearRoleFace() {
@@ -1450,7 +1503,11 @@
   multiplayer.on("exploration-started", ({ room }) => {
     navigateToRoom(room);
   });
-  multiplayer.on("exploration-state", () => multiplayer.currentRoom?.state === "exploration" && renderExploration(multiplayer.currentRoom));
+  multiplayer.on("exploration-state", () => {
+    if (multiplayer.currentRoom?.state !== "exploration") return;
+    renderExploration(multiplayer.currentRoom);
+    void mountExplorationGame(multiplayer.currentRoom);
+  });
   multiplayer.on("exploration-location", ({ room }) => navigateToRoom(room));
   multiplayer.on("exploration-search-started", () => multiplayer.currentRoom && renderExploration(multiplayer.currentRoom));
   multiplayer.on("exploration-clue-found", () => {
@@ -1531,6 +1588,7 @@
   });
   multiplayer.on("restored", (room) => {
     navigateToRoom(room);
+    if (room.state === "exploration") void mountExplorationGame(room);
     showToast("Sesión y etapa recuperadas correctamente.", "success");
   });
   multiplayer.on("restore-failed", (error = {}) => {

@@ -467,6 +467,8 @@ dialog[open] { animation: dialog-enter 180ms var(--ease-out) both; }
 .exploration-canvas { position: absolute; inset: 0; }
 .exploration-canvas canvas { display: block; width: 100% !important; height: 100% !important; }
 .exploration-loading { position: absolute; inset: 0; z-index: 8; display: grid; place-items: center; color: var(--color-gold-light); background: radial-gradient(circle, rgba(25, 55, 61, .96), rgba(5, 15, 20, .99)); font-family: Georgia, serif; letter-spacing: .04em; }
+.exploration-loading { align-content: center; gap: var(--space-4); padding: var(--space-6); text-align: center; }
+.exploration-loading[data-state="error"] { color: var(--color-paper); }
 .exploration-loading[hidden] { display: none; }
 .exploration-prompt { position: absolute; z-index: 5; left: 50%; bottom: max(1rem, env(safe-area-inset-bottom)); max-width: min(34rem, calc(100% - 12rem)); margin: 0; padding: .6rem .9rem; translate: -50% 0; color: var(--color-paper); background: rgba(5, 15, 20, .88); border: 1px solid rgba(214, 173, 87, .45); border-radius: 999px; font-size: .76rem; text-align: center; pointer-events: none; }
 .exploration-interact { position: absolute; z-index: 6; right: max(1rem, env(safe-area-inset-right)); bottom: max(1rem, env(safe-area-inset-bottom)); min-width: 8rem; }

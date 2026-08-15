@@ -98,13 +98,21 @@
         this.emitLocal("game-started", room);
       });
       this.socket.on("story:presented", (payload) => this.emitLocal("story-presented", payload));
-      this.socket.on("game:state", ({ room, confirmations, voting, exploration, reconstruction }) => {
+      this.socket.on("game:state", ({ room, confirmations, voting, exploration, reconstruction, clues, serverTime }) => {
+        this.syncServerTime(serverTime);
         if (confirmations) this.confirmations = { ...this.confirmations, ...confirmations };
         if (voting) this.hasVoted = Boolean(voting.hasVoted);
         if (exploration) this.privateExploration = { ...exploration, investigatedObjectIds: [...(exploration.investigatedObjectIds || [])] };
+        if (Array.isArray(clues?.cards) && typeof clues?.instructions === "string") {
+          this.privateClues = {
+            cards: clues.cards.map((card) => ({ ...card })),
+            observation: clues.observation ? { ...clues.observation } : null,
+            instructions: clues.instructions
+          };
+        }
         if (reconstruction) this.reconstructionConfirmedVersion = reconstruction.confirmedVersion ?? null;
         this.acceptRoomUpdate(room);
-        this.emitLocal("game-state", { room, confirmations: { ...this.confirmations }, exploration: this.privateExploration });
+        this.emitLocal("game-state", { room, confirmations: { ...this.confirmations }, exploration: this.privateExploration, clues: this.privateClues });
       });
       this.socket.on("story:progress", (payload) => this.emitLocal("story-progress", payload));
       this.socket.on("role:assigned", (role) => {
@@ -132,8 +140,10 @@
         this.acceptRoomUpdate(payload.room);
         this.emitLocal("exploration-started", payload);
       });
-      this.socket.on("exploration:state", ({ exploration }) => {
+      this.socket.on("exploration:state", ({ exploration, room, serverTime }) => {
+        this.syncServerTime(serverTime);
         this.privateExploration = exploration ? { ...exploration, investigatedObjectIds: [...(exploration.investigatedObjectIds || [])] } : null;
+        if (room) this.acceptRoomUpdate(room);
         this.emitLocal("exploration-state", this.privateExploration);
       });
       this.socket.on("exploration:location-updated", (payload) => {

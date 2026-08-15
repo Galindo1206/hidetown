@@ -299,7 +299,10 @@
           <button class="button button--secondary" id="open-exploration-notebook" type="button">Abrir cuaderno</button>
         </div>
         <div class="exploration-stage" id="exploration-stage">
-          <div class="exploration-loading" id="exploration-loading" role="status">Preparando San Jerónimo…</div>
+          <div class="exploration-loading" id="exploration-loading" role="status">
+            <span id="exploration-loading-message">Preparando San Jerónimo…</span>
+            <button class="button button--secondary" id="exploration-loading-retry" type="button" hidden>Reintentar</button>
+          </div>
           <div class="exploration-canvas" id="exploration-canvas" aria-label="Aldea 2D caminable multijugador"></div>
           <p class="exploration-prompt" id="exploration-interaction-prompt" aria-live="polite">Acércate a una pista o una puerta</p>
           <div class="virtual-joystick" id="virtual-joystick" role="group" aria-label="Joystick virtual">
