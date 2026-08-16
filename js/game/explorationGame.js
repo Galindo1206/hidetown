@@ -2,20 +2,62 @@
   "use strict";
 
   const LOAD_TIMEOUT_MS = 12_000;
+  const CONTAINER_TIMEOUT_MS = 5_000;
+  const MIN_GAME_WIDTH = 320;
+  const MIN_GAME_HEIGHT = 240;
+
+  function waitForVisibleContainer(container, timeoutMs = CONTAINER_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+      const startedAt = performance.now();
+      let retryTimer = null;
+      let animationFrame = null;
+      let firstFramePassed = false;
+
+      const finish = (size) => {
+        window.clearTimeout(retryTimer);
+        window.cancelAnimationFrame(animationFrame);
+        resolve(size);
+      };
+      const check = () => {
+        if (!firstFramePassed) {
+          firstFramePassed = true;
+          animationFrame = window.requestAnimationFrame(check);
+          return;
+        }
+        const width = container?.clientWidth || 0;
+        const height = container?.clientHeight || 0;
+        if (container?.isConnected && width > 0 && height > 0) {
+          finish({ width, height });
+          return;
+        }
+        if (performance.now() - startedAt >= timeoutMs) {
+          finish(null);
+          return;
+        }
+        retryTimer = window.setTimeout(check, 50);
+      };
+
+      animationFrame = window.requestAnimationFrame(check);
+    });
+  }
 
   class ExplorationGame {
-    constructor({ multiplayer, audio, onError, onRetry }) {
+    constructor({ multiplayer, audio, onError, onRetry, onExit }) {
       this.multiplayer = multiplayer;
       this.audio = audio;
       this.onError = onError;
       this.onRetry = onRetry;
+      this.onExit = onExit;
       this.instance = null;
       this.soundscape = null;
       this.loadTimer = null;
       this.generation = 0;
       this.failed = false;
+      this.failureCount = 0;
       this.retryButton = document.querySelector("#exploration-loading-retry");
+      this.homeButton = document.querySelector("#exploration-loading-home");
       this.retryButton?.addEventListener("click", () => this.onRetry?.());
+      this.homeButton?.addEventListener("click", () => this.onExit?.());
     }
 
     get mounted() { return Boolean(this.instance); }
@@ -28,6 +70,7 @@
       loading.dataset.state = "loading";
       label.textContent = message;
       if (this.retryButton) this.retryButton.hidden = true;
+      if (this.homeButton) this.homeButton.hidden = true;
     }
 
     showError(message) {
@@ -40,15 +83,19 @@
       loading.dataset.state = "error";
       label.textContent = message;
       if (this.retryButton) this.retryButton.hidden = false;
+      this.failureCount += 1;
+      if (this.homeButton) this.homeButton.hidden = this.failureCount < 2;
     }
 
     markReady(generation) {
       if (generation !== this.generation || !this.instance || this.failed) return;
       window.clearTimeout(this.loadTimer);
       this.loadTimer = null;
+      this.failureCount = 0;
       const loading = document.querySelector("#exploration-loading");
       if (loading) { loading.hidden = true; delete loading.dataset.state; }
       if (this.retryButton) this.retryButton.hidden = true;
+      if (this.homeButton) this.homeButton.hidden = true;
     }
 
     reportResourceError(resource, essential = true) {
@@ -61,7 +108,8 @@
       error.code = "PHASER_RESOURCE_FAILED";
       error.resource = resourceName;
       this.failed = true;
-      this.showError(`${error.message} Pulsa Reintentar.`);
+      this.showError(`Tu navegador no pudo iniciar el mapa. Intenta nuevamente. ${error.message} Código: ${error.code}.`);
+      console.error("Phaser resource failed", { code: error.code, renderer: "canvas", resource: resourceName });
       this.onError?.(error);
     }
 
@@ -79,10 +127,13 @@
       return true;
     }
 
-    mount(room) {
+    mount(room, measuredSize = null) {
       const container = document.querySelector("#exploration-canvas");
       if (!container?.isConnected || !window.Phaser || !room?.exploration?.world || !this.multiplayer.privateExploration) return false;
       if (this.instance) return this.sync(room);
+      const measuredWidth = measuredSize?.width || container.clientWidth;
+      const measuredHeight = measuredSize?.height || container.clientHeight;
+      if (measuredWidth <= 0 || measuredHeight <= 0) return false;
 
       const requiredResources = [
         ["PreloadScene", "/js/game/scenes/PreloadScene.js"],
@@ -106,11 +157,13 @@
       this.soundscape = new window.HideTownGame.ExplorationAudio(this.audio);
       try {
         this.instance = new Phaser.Game({
-          type: Phaser.AUTO,
+          type: Phaser.CANVAS,
           parent: container,
+          width: Math.max(Math.floor(measuredWidth), MIN_GAME_WIDTH),
+          height: Math.max(Math.floor(measuredHeight), MIN_GAME_HEIGHT),
           backgroundColor: "#081923",
           transparent: false,
-          scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH, width: "100%", height: "100%" },
+          scale: { mode: Phaser.Scale.RESIZE, autoCenter: Phaser.Scale.CENTER_BOTH },
           physics: { default: "arcade", arcade: { debug: false } },
           render: { antialias: true, pixelArt: false, roundPixels: false },
           callbacks: {
@@ -130,7 +183,9 @@
         });
         this.loadTimer = window.setTimeout(() => {
           if (generation !== this.generation || !this.instance) return;
-          this.showError("El mapa tardó demasiado en cargar. Comprueba la conexión y pulsa Reintentar.");
+          this.failed = true;
+          this.showError("Tu navegador no pudo iniciar el mapa. Intenta nuevamente. Código: MAP_LOAD_TIMEOUT.");
+          console.error("Phaser load timed out", { code: "MAP_LOAD_TIMEOUT", renderer: "canvas" });
         }, LOAD_TIMEOUT_MS);
         return true;
       } catch (error) {
@@ -138,17 +193,22 @@
         this.instance = null;
         this.soundscape?.destroy();
         this.soundscape = null;
-        this.showError(`No se pudo iniciar Phaser: ${error.message || "error desconocido"}. Pulsa Reintentar.`);
-        this.onError?.(error);
+        container.replaceChildren();
+        const publicError = new Error("Tu navegador no pudo iniciar el mapa. Intenta nuevamente.");
+        publicError.code = "MAP_INIT_FAILED";
+        this.showError(`${publicError.message} Código: ${publicError.code}.`);
+        console.error("Phaser initialization failed", { code: publicError.code, renderer: "canvas", errorName: error?.name || "Error" });
+        this.onError?.(publicError);
         return false;
       }
     }
 
     updateRoom(room) { if (room?.state === "exploration") this.mount(room); else this.destroy(); }
 
-    destroy() {
+    destroy({ preserveFailures = false } = {}) {
       this.generation += 1;
       this.failed = false;
+      if (!preserveFailures) this.failureCount = 0;
       window.clearTimeout(this.loadTimer);
       this.loadTimer = null;
       this.soundscape?.destroy();
@@ -159,8 +219,10 @@
       const loading = document.querySelector("#exploration-loading");
       if (loading) { loading.hidden = true; delete loading.dataset.state; }
       if (this.retryButton) this.retryButton.hidden = true;
+      if (this.homeButton) this.homeButton.hidden = true;
     }
   }
 
+  window.HideTownGame.waitForVisibleContainer = waitForVisibleContainer;
   window.ExplorationGame = ExplorationGame;
 })();

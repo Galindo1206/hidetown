@@ -12,8 +12,13 @@
     audio,
     onError(error) { showNotice(document.querySelector("#exploration-notice"), error.message, "error"); },
     onRetry() {
-      explorationGame.destroy();
+      explorationGame.destroy({ preserveFailures: true });
       void mountExplorationGame(multiplayer.currentRoom);
+    },
+    async onExit() {
+      try { await multiplayer.leaveRoom(); }
+      catch (error) { multiplayer.abandonSession(); }
+      navigation.goTo("menu");
     }
   });
   let copyFeedbackTimer;
@@ -58,14 +63,28 @@
     explorationGame.showLoading();
     explorationMountPromise = new Promise((resolve) => {
       const startedAt = Date.now();
-      const attempt = () => {
+      const attempt = async () => {
         const currentRoom = latestExplorationState || multiplayer.currentRoom;
         if (currentRoom?.state !== "exploration") { resolve(false); return; }
         const missing = missingExplorationResource(currentRoom);
-        if (!missing && explorationGame.mount(currentRoom)) { resolve(true); return; }
+        if (!missing) {
+          const explorationScreen = document.querySelector("#exploration-screen");
+          if (explorationScreen?.hidden && !navigation.isTransitioning && navigation.currentId !== "exploration-screen") {
+            navigation.goTo("exploration-screen", { focus: false });
+          }
+          const remaining = Math.max(0, 12_000 - (Date.now() - startedAt));
+          const size = await window.HideTownGame.waitForVisibleContainer(
+            document.querySelector("#exploration-canvas"),
+            Math.min(1_000, remaining)
+          );
+          const authoritativeRoom = multiplayer.currentRoom?.state === "exploration" ? multiplayer.currentRoom : currentRoom;
+          if (size && explorationGame.mount(authoritativeRoom, size)) { resolve(true); return; }
+        }
         if (explorationGame.failed) { resolve(false); return; }
         if (Date.now() - startedAt >= 12_000) {
-          explorationGame.showError(`No se pudo cargar el mapa. Recurso pendiente o fallido: ${missing || "Phaser"}. Pulsa Reintentar.`);
+          const code = missing ? "MAP_RESOURCE_UNAVAILABLE" : "MAP_CONTAINER_UNAVAILABLE";
+          explorationGame.showError(`Tu navegador no pudo iniciar el mapa. Intenta nuevamente. Código: ${code}.`);
+          console.error("Phaser mount failed", { code, renderer: "canvas", resource: missing || "#exploration-canvas" });
           resolve(false);
           return;
         }

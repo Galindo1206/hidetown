@@ -57,9 +57,14 @@ test("el mapa de exploración conserva controles accesibles, recuperación y ada
   assert.match(html, /id="open-exploration-notebook"/);
   assert.match(html, /id="exploration-loading-retry"[^>]*>Reintentar</);
   assert.match(app, /function mountExplorationGame\(state\)/);
+  assert.match(app, /waitForVisibleContainer/);
   assert.match(app, /multiplayer\.on\("exploration-state"[\s\S]*mountExplorationGame/);
   assert.match(app, /multiplayer\.on\("restored"[\s\S]*mountExplorationGame/);
   assert.match(game, /if \(this\.instance\) return this\.sync\(room\)/);
+  assert.match(game, /type: Phaser\.CANVAS/);
+  assert.doesNotMatch(game, /type: Phaser\.(?:AUTO|WEBGL)/);
+  assert.match(game, /Math\.max\(Math\.floor\(measuredWidth\), MIN_GAME_WIDTH\)/);
+  assert.match(game, /function waitForVisibleContainer\(container/);
   assert.match(game, /LOAD_TIMEOUT_MS = 12_000/);
   assert.match(preload, /loaderror/);
   assert.match(preload, /createCanvas\(file\.key/);

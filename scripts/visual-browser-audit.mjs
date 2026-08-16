@@ -58,7 +58,11 @@ const resourceSummary = await evaluate(`(() => {
   };
 })()`);
 const phaserLifecycle = await evaluate(`(async () => {
-  document.querySelectorAll('[data-screen]').forEach((screen) => { screen.hidden = screen.id !== 'exploration-screen'; });
+  const explorationScreen = document.querySelector('#exploration-screen');
+  explorationScreen.hidden = true;
+  const hiddenContainer = await window.HideTownGame.waitForVisibleContainer(document.querySelector('#exploration-canvas'), 120);
+  document.querySelectorAll('[data-screen]').forEach((screen) => { screen.hidden = screen.id !== 'exploration-screen'; screen.classList.toggle('is-active', screen.id === 'exploration-screen'); });
+  const visibleContainer = await window.HideTownGame.waitForVisibleContainer(document.querySelector('#exploration-canvas'), 500);
   const listeners = new EventTarget();
   const multiplayer = {
     session: { playerId: 'audit-player' }, privateExploration: { sceneId: 'village', x: 400, y: 400, direction: 'down', isMoving: false, investigatedObjectIds: [], clueCount: 0 },
@@ -71,6 +75,7 @@ const phaserLifecycle = await evaluate(`(async () => {
   const game = new ExplorationGame({ multiplayer, audio, onError() {} });
   const mounted = game.mount(multiplayer.currentRoom);
   await new Promise((resolve) => setTimeout(resolve, 350));
+  const rendererCanvas = game.instance?.renderer?.type === Phaser.CANVAS;
   const first = document.querySelectorAll('#exploration-canvas canvas').length;
   game.mount(multiplayer.currentRoom);
   const second = document.querySelectorAll('#exploration-canvas canvas').length;
@@ -81,7 +86,7 @@ const phaserLifecycle = await evaluate(`(async () => {
   await new Promise((resolve) => setTimeout(resolve, 250));
   const afterRemount = document.querySelectorAll('#exploration-canvas canvas').length;
   game.destroy(); audio.destroy();
-  return { mounted, first, second, afterDestroy, afterRemount, valid: mounted && first === 1 && second === 1 && afterDestroy === 0 && afterRemount === 1 };
+  return { hiddenContainer, visibleContainer, rendererCanvas, mounted, first, second, afterDestroy, afterRemount, valid: hiddenContainer === null && visibleContainer?.width > 0 && visibleContainer?.height > 0 && rendererCanvas && mounted && first === 1 && second === 1 && afterDestroy === 0 && afterRemount === 1 };
 })()`);
 const sizes = [[320, 568], [360, 640], [375, 667], [390, 844], [412, 915], [768, 1024], [1024, 768], [1366, 768], [1920, 1080]];
 const screenIds = await evaluate("[...document.querySelectorAll('[data-screen]')].map((screen) => screen.id)");
